@@ -1,0 +1,48 @@
+{
+  "threads": [
+    {
+      "address": 536871096,
+      "name": "stress_id",
+      "stack_size": 1024,
+      "runtime": {
+        "cpu": 100.0,
+        "cpu_normalized": 0.12199344704447042,
+        "active": true,
+        "stack_watermark": 744,
+        "stack_watermark_percent": 72.65625
+      }
+    },
+    {
+      "address": 536871288,
+      "name": "idle",
+      "stack_size": 256,
+      "runtime": {
+        "cpu": 0.0,
+        "cpu_normalized": 99.87800655295554,
+        "active": true,
+        "stack_watermark": 64,
+        "stack_watermark_percent": 25.0
+      }
+    },
+    {
+      "address": 536871480,
+      "name": "main",
+      "stack_size": 1024,
+      "runtime": {
+        "cpu": 0.0,
+        "cpu_normalized": 0.0,
+        "active": false,
+        "stack_watermark": 240,
+        "stack_watermark_percent": 23.4375
+      }
+    }
+  ],
+  "heaps": [
+    {
+      "address": 536873128,
+      "name": "my_kernel_heap",
+      "allocated_bytes": 1536,
+      "free_bytes": 512
+    }
+  ]
+}

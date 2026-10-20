@@ -1,0 +1,68 @@
+[
+  {
+    "elapsed_seconds": 0, "threads": [],
+    "heaps": [{"name":"heap","address":4096,"allocated_bytes":64,"free_bytes":192,"waiters":[]}],
+    "semaphores": [{"name":"gate","address":8192,"count":0,"limit":3,"waiters":["worker"]}],
+    "mutexes": [{"name":"gate","address":12288,"lock_count":1,"owner_address":20480,"owner_name":"producer","waiters":[]}],
+    "mem_slabs": [{"name":"slab","address":24576,"num_used":2,"num_blocks":8,"block_size":32,"max_used":6,"waiters":[]}],
+    "workqs": [{"name":"work","address":28672,"flags":3,"pending":["publish"],"waiters":[]}],
+    "msgqs": [
+      {"name":"messages","address":16384,"used_msgs":0,"max_msgs":8,"msg_size":32,"waiters":["consumer_a","consumer_b"]},
+      {"name":"telemetry","address":16640,"used_msgs":2,"max_msgs":16,"msg_size":64,"waiters":[]},
+      {"name":"commands","address":16896,"used_msgs":0,"max_msgs":4,"msg_size":16,"waiters":["command_worker"]}
+    ]
+  },
+  {
+    "elapsed_seconds": 2, "threads": [],
+    "semaphores": [{"name":"gate","address":8192,"count":1,"limit":3,"waiters":[]}],
+    "msgqs": [
+      {"name":"messages","address":16384,"used_msgs":2,"max_msgs":8,"msg_size":32,"waiters":[]},
+      {"name":"telemetry","address":16640,"used_msgs":5,"max_msgs":16,"msg_size":64,"waiters":[]},
+      {"name":"commands","address":16896,"used_msgs":1,"max_msgs":4,"msg_size":16,"waiters":[]}
+    ]
+  },
+  {
+    "elapsed_seconds": 4, "threads": [],
+    "semaphores": [{"name":"gate","address":8192,"count":2,"limit":3,"waiters":[]}],
+    "msgqs": [
+      {"name":"messages","address":16384,"used_msgs":5,"max_msgs":8,"msg_size":32,"waiters":[]},
+      {"name":"telemetry","address":16640,"used_msgs":10,"max_msgs":16,"msg_size":64,"waiters":[]},
+      {"name":"commands","address":16896,"used_msgs":4,"max_msgs":4,"msg_size":16,"waiters":["command_sender"]}
+    ]
+  },
+  {
+    "elapsed_seconds": 6, "threads": [],
+    "semaphores": [{"name":"gate","address":8192,"count":3,"limit":3,"waiters":[]}],
+    "msgqs": [
+      {"name":"messages","address":16384,"used_msgs":8,"max_msgs":8,"msg_size":32,"waiters":["producer_a","producer_b"]},
+      {"name":"telemetry","address":16640,"used_msgs":16,"max_msgs":16,"msg_size":64,"waiters":["telemetry_writer"]},
+      {"name":"commands","address":16896,"used_msgs":2,"max_msgs":4,"msg_size":16,"waiters":[]}
+    ]
+  },
+  {
+    "elapsed_seconds": 8, "threads": [],
+    "semaphores": [{"name":"gate","address":8192,"count":1,"limit":3,"waiters":[]}],
+    "msgqs": [
+      {"name":"messages","address":16384,"used_msgs":3,"max_msgs":8,"msg_size":32,"waiters":[]},
+      {"name":"telemetry","address":16640,"used_msgs":null,"max_msgs":16,"msg_size":64,"waiters":null},
+      {"name":"commands","address":16896,"used_msgs":0,"max_msgs":4,"msg_size":16,"waiters":["command_worker"]}
+    ]
+  },
+  {
+    "elapsed_seconds": 10, "threads": [],
+    "semaphores": [{"name":"gate","address":8192,"count":0,"limit":3,"waiters":["worker"]}],
+    "msgqs": [
+      {"name":"messages","address":16384,"used_msgs":0,"max_msgs":8,"msg_size":32,"waiters":["consumer_a","consumer_b"]},
+      {"name":"telemetry","address":16640,"used_msgs":6,"max_msgs":16,"msg_size":64,"waiters":[]}
+    ]
+  },
+  {
+    "elapsed_seconds": 12, "threads": [],
+    "semaphores": [{"name":"gate","address":8192,"count":2,"limit":3,"waiters":[]}],
+    "msgqs": [
+      {"name":"messages","address":16384,"used_msgs":4,"max_msgs":8,"msg_size":32,"waiters":[]},
+      {"name":"telemetry","address":16640,"used_msgs":9,"max_msgs":16,"msg_size":64,"waiters":[]},
+      {"name":"commands","address":16896,"used_msgs":1,"max_msgs":4,"msg_size":16,"waiters":[]}
+    ]
+  }
+]
