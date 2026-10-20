@@ -1,0 +1,6 @@
+ZView UI was extracted from the experimental desktop/ directory of ZView.
+ZView: https://github.com/wkhadgar/zview
+Desktop development fork: https://github.com/rodrigopex/zview
+
+The extraction retains the Apache-2.0 license. Benchmark fixture provenance
+and upstream attribution are documented in test-data/zview-bench-60s/README.md.

@@ -1,0 +1,16 @@
+[package]
+name = "zview-desktop"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+gpui-kit = "=0.7.3"
+lyon = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+# Match Kit 0.7.3's GPUI snapshot. Enabling Kit's test-support feature also
+# resolves its optional Fast backend, whose pinned dependencies conflict here.
+gpui = { package = "gpui-pre", version = "=0.3.9", features = ["test-support"] }

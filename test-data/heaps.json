@@ -1,0 +1,49 @@
+[
+  {
+    "elapsed_seconds": 0,
+    "threads": [],
+    "heaps": [
+      {"name": "packet_heap", "address": 4096, "allocated_bytes": 64, "free_bytes": 192, "max_allocated_bytes": 128, "waiters": [],
+       "chunks": [{"size": 64, "used": true}, {"size": 64, "used": false}, {"size": 64, "used": false}, {"size": 64, "used": false}]},
+      {"name": "packet_heap", "address": 8192, "allocated_bytes": 8, "free_bytes": 24, "waiters": null}
+    ]
+  },
+  {
+    "elapsed_seconds": 0.7,
+    "threads": [],
+    "heaps": [
+      {"name": "packet_heap", "address": 4096, "allocated_bytes": 256, "free_bytes": 0, "max_allocated_bytes": 256, "waiters": ["worker", "logger"],
+       "chunks": [{"size": 64, "used": true}, {"size": 128, "used": true}, {"size": 64, "used": true}]}
+    ]
+  },
+  {
+    "elapsed_seconds": 2.5,
+    "threads": [],
+    "heaps": [
+      {"name": "packet_heap", "address": 4096, "allocated_bytes": 128, "free_bytes": 128, "max_allocated_bytes": 256, "waiters": ["worker"],
+       "chunks": [{"size": 64, "used": true}, {"size": 64, "used": false}, {"size": 64, "used": true}, {"size": 64, "used": false}]}
+    ]
+  },
+  {
+    "elapsed_seconds": 5,
+    "threads": [],
+    "heaps": [
+      {"name": "replacement_heap", "address": 4096, "allocated_bytes": 900, "free_bytes": 124, "waiters": null, "chunks": null}
+    ]
+  },
+  {
+    "elapsed_seconds": 6,
+    "threads": [],
+    "heaps": [
+      {"name": "packet_heap", "address": 4096, "allocated_bytes": 0, "free_bytes": 256, "max_allocated_bytes": 256, "waiters": [],
+       "chunks": [{"size": 256, "used": false}]}
+    ]
+  },
+  {
+    "elapsed_seconds": 8,
+    "threads": [],
+    "heaps": [
+      {"name": "packet_heap", "address": 4096, "allocated_bytes": 512, "free_bytes": 512, "waiters": null, "chunks": null}
+    ]
+  }
+]

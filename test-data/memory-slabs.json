@@ -1,0 +1,117 @@
+[
+  {
+    "elapsed_seconds": 0,
+    "threads": [],
+    "mem_slabs": [
+      {"name": "packet_pool", "address": 24576, "num_used": 2, "num_blocks": 8, "block_size": 32, "max_used": 4, "waiters": []},
+      {"name": "untracked_pool", "address": 24832, "num_used": 1, "num_blocks": 4, "block_size": 64, "max_used": null, "waiters": null},
+      {"name": "empty_pool", "address": 25088, "num_used": 0, "num_blocks": 16, "block_size": 128, "max_used": 0, "waiters": []},
+      {"name": "unknown_pool", "address": 25344, "num_used": null, "num_blocks": null, "block_size": null, "max_used": null, "waiters": null},
+      {"name": "zero_capacity_pool", "address": 25600, "num_used": 0, "num_blocks": 0, "block_size": 64, "max_used": 0, "waiters": []}
+    ]
+  },
+  {
+    "elapsed_seconds": 2,
+    "threads": [],
+    "mem_slabs": [
+      {"name": "packet_pool", "address": 24576, "num_used": 8, "num_blocks": 8, "block_size": 32, "max_used": 8, "waiters": ["receiver", "worker"]},
+      {"name": "untracked_pool", "address": 24832, "num_used": 3, "num_blocks": 4, "block_size": 64, "max_used": null, "waiters": []},
+      {"name": "empty_pool", "address": 25088, "num_used": 0, "num_blocks": 16, "block_size": 128, "max_used": 0, "waiters": []},
+      {"name": "unknown_pool", "address": 25344, "num_used": null, "num_blocks": 12, "block_size": 256, "max_used": null, "waiters": null},
+      {"name": "zero_capacity_pool", "address": 25600, "num_used": 0, "num_blocks": 0, "block_size": 64, "max_used": 0, "waiters": []}
+    ]
+  },
+  {
+    "elapsed_seconds": 5,
+    "threads": [],
+    "mem_slabs": [
+      {"name": "packet_pool", "address": 24576, "num_used": 4, "num_blocks": 8, "block_size": 32, "max_used": 8, "waiters": []},
+      {"name": "untracked_pool", "address": 24832, "num_used": 0, "num_blocks": 4, "block_size": 64, "max_used": null, "waiters": []},
+      {"name": "empty_pool", "address": 25088, "num_used": 0, "num_blocks": 16, "block_size": 128, "max_used": 0, "waiters": []},
+      {"name": "unknown_pool", "address": 25344, "num_used": 3, "num_blocks": null, "block_size": 256, "max_used": null, "waiters": null},
+      {"name": "zero_capacity_pool", "address": 25600, "num_used": 0, "num_blocks": 0, "block_size": 64, "max_used": 0, "waiters": []}
+    ]
+  },
+  {
+    "elapsed_seconds": 7,
+    "threads": [],
+    "mem_slabs": [
+      {"name": "packet_pool", "address": 24576, "num_used": null, "num_blocks": 8, "block_size": 32, "max_used": 8, "waiters": null},
+      {"name": "untracked_pool", "address": 24832, "num_used": 2, "num_blocks": 4, "block_size": 64, "max_used": null, "waiters": []}
+    ]
+  },
+  {
+    "elapsed_seconds": 9,
+    "threads": [],
+    "mem_slabs": [
+      {"name": "packet_pool", "address": 24576, "num_used": 1, "num_blocks": 8, "block_size": 32, "max_used": 8, "waiters": []},
+      {"name": "untracked_pool", "address": 24832, "num_used": 4, "num_blocks": 4, "block_size": 64, "max_used": null, "waiters": ["telemetry_writer"]}
+    ]
+  },
+  {
+    "elapsed_seconds": 10,
+    "threads": [],
+    "mem_slabs": [
+      {"name": "untracked_pool", "address": 24832, "num_used": 1, "num_blocks": 4, "block_size": 64, "max_used": null, "waiters": []}
+    ]
+  },
+  {
+    "elapsed_seconds": 12,
+    "threads": [],
+    "mem_slabs": [
+      {"name": "packet_pool", "address": 24576, "num_used": 3, "num_blocks": 8, "block_size": 32, "max_used": 8, "waiters": []},
+      {"name": "untracked_pool", "address": 24832, "num_used": 2, "num_blocks": 4, "block_size": 64, "max_used": null, "waiters": []},
+      {"name": "empty_pool", "address": 25088, "num_used": 0, "num_blocks": 16, "block_size": 128, "max_used": 0, "waiters": []},
+      {"name": "unknown_pool", "address": 25344, "num_used": null, "num_blocks": null, "block_size": null, "max_used": null, "waiters": null},
+      {"name": "zero_capacity_pool", "address": 25600, "num_used": 0, "num_blocks": 0, "block_size": 64, "max_used": 0, "waiters": []}
+    ]
+  },
+  {
+    "elapsed_seconds": 14,
+    "threads": [],
+    "mem_slabs": [
+      {"name": "packet_pool", "address": 24576, "num_used": 5, "num_blocks": 8, "block_size": 32, "max_used": 8, "waiters": []},
+      {"name": "untracked_pool", "address": 24832, "num_used": 3, "num_blocks": 4, "block_size": 64, "max_used": null, "waiters": []}
+    ]
+  },
+  {
+    "elapsed_seconds": 16,
+    "threads": [],
+    "mem_slabs": [
+      {"name": "packet_pool", "address": 24576, "num_used": 7, "num_blocks": 8, "block_size": 32, "max_used": 8, "waiters": []},
+      {"name": "untracked_pool", "address": 24832, "num_used": 4, "num_blocks": 4, "block_size": 64, "max_used": null, "waiters": ["telemetry_writer", "logger"]}
+    ]
+  },
+  {
+    "elapsed_seconds": 18,
+    "threads": [],
+    "mem_slabs": [
+      {"name": "packet_pool", "address": 24576, "num_used": 8, "num_blocks": 8, "block_size": 32, "max_used": 8, "waiters": ["receiver", "worker", "network_rx", "decoder"]},
+      {"name": "untracked_pool", "address": 24832, "num_used": 2, "num_blocks": 4, "block_size": 64, "max_used": null, "waiters": []}
+    ]
+  },
+  {
+    "elapsed_seconds": 20,
+    "threads": [],
+    "mem_slabs": [
+      {"name": "packet_pool", "address": 24576, "num_used": 4, "num_blocks": 8, "block_size": 32, "max_used": 8, "waiters": []},
+      {"name": "untracked_pool", "address": 24832, "num_used": 1, "num_blocks": 4, "block_size": 64, "max_used": null, "waiters": []}
+    ]
+  },
+  {
+    "elapsed_seconds": 22,
+    "threads": [],
+    "mem_slabs": [
+      {"name": "packet_pool", "address": 24576, "num_used": 0, "num_blocks": 8, "block_size": 32, "max_used": 8, "waiters": []},
+      {"name": "untracked_pool", "address": 24832, "num_used": 0, "num_blocks": 4, "block_size": 64, "max_used": null, "waiters": []}
+    ]
+  },
+  {
+    "elapsed_seconds": 24,
+    "threads": [],
+    "mem_slabs": [
+      {"name": "packet_pool", "address": 24576, "num_used": 2, "num_blocks": 8, "block_size": 32, "max_used": 8, "waiters": []},
+      {"name": "untracked_pool", "address": 24832, "num_used": 1, "num_blocks": 4, "block_size": 64, "max_used": null, "waiters": []}
+    ]
+  }
+]

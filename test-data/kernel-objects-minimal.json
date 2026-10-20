@@ -1,0 +1,36 @@
+[
+  {
+    "elapsed_seconds": 0,
+    "threads": [],
+    "heaps": [
+      {"name": "heap", "address": 4096, "allocated_bytes": 64, "free_bytes": 192, "waiters": null}
+    ],
+    "semaphores": [
+      {"name": "gate", "address": 8192, "count": 0, "limit": 3, "waiters": ["worker"]}
+    ],
+    "mutexes": [
+      {"name": "gate", "address": 12288, "lock_count": 2, "owner_address": 20480, "owner_name": "owner", "waiters": ["worker"]}
+    ],
+    "msgqs": [
+      {"name": "messages", "address": 16384, "used_msgs": 4, "max_msgs": 4, "msg_size": 16, "waiters": []}
+    ],
+    "mem_slabs": [
+      {"name": "slab", "address": 24576, "num_used": 2, "num_blocks": 8, "block_size": 32, "max_used": 6, "waiters": []}
+    ],
+    "workqs": [
+      {"name": "work", "address": 28672, "flags": 3, "pending": ["task"], "pending_truncated": true, "waiters": []}
+    ]
+  },
+  {
+    "elapsed_seconds": 5,
+    "threads": [],
+    "heaps": [],
+    "semaphores": [
+      {"name": "gate", "address": 8192, "count": 2, "limit": 3, "waiters": []}
+    ],
+    "mutexes": [],
+    "msgqs": [],
+    "mem_slabs": [],
+    "workqs": []
+  }
+]

@@ -1,0 +1,7 @@
+[
+  {"elapsed_seconds":0,"threads":[],"workqs":[{"name":"system_workq","address":28672,"flags":3,"thread_name":"sysworkq","pending":["flush_logs","send_packet"],"waiters":[]},{"name":"system_workq","address":28673,"flags":0,"pending":[]}]},
+  {"elapsed_seconds":2,"threads":[],"workqs":[{"name":"system_workq","address":28672,"flags":3,"thread_name":"sysworkq","pending":[],"waiters":[]}]},
+  {"elapsed_seconds":5,"threads":[],"workqs":[{"name":"system_workq","address":28672,"flags":15,"pending":["flush_logs"],"pending_truncated":true,"waiters":["drainer"]}]},
+  {"elapsed_seconds":8,"threads":[],"workqs":[{"name":"system_workq","address":28672,"flags":null,"pending":null,"waiters":null}]},
+  {"elapsed_seconds":10,"threads":[],"workqs":[{"name":"replacement","address":28672,"flags":1,"pending":["a","b","c","d"],"waiters":[]}]}
+]
