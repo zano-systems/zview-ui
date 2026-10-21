@@ -12,18 +12,12 @@ fn depth_history(frames: &[Frame], current: usize, key: &MessageQueueKey) -> (Ch
     let series = model::chart_series(frames, current, |frame| {
         key.in_frame(frame)?.used_msgs.map(|depth| depth as f64)
     });
-    let maximum = key
-        .in_frame(&frames[current])
-        .and_then(|queue| queue.max_msgs)
-        .filter(|capacity| *capacity > 0)
+    let maximum = frames[..=current]
+        .iter()
+        .filter_map(|frame| key.in_frame(frame)?.max_msgs)
         .map(|capacity| capacity as f64)
-        .unwrap_or_else(|| {
-            series
-                .points
-                .iter()
-                .filter_map(|point| point.value)
-                .fold(1., f64::max)
-        });
+        .chain(series.points.iter().filter_map(|point| point.value))
+        .fold(1., f64::max);
     (series, maximum)
 }
 
@@ -53,9 +47,9 @@ fn field(title: &'static str, value: String) -> impl IntoElement {
         .flex_1()
         .flex()
         .flex_col()
-        .gap_2()
+        .gap_1()
         .child(div().text_xs().text_color(rgb(MUTED)).child(title))
-        .child(div().text_sm().child(value))
+        .child(crate::layout::note(title, value).text_sm())
 }
 
 impl ThreadsApp {
@@ -81,13 +75,16 @@ impl ThreadsApp {
         let caption = series.caption.clone();
         let scale = match queue.and_then(|queue| queue.max_msgs) {
             Some(0) => format!("Zero capacity · scale 0–{maximum:.0} observed"),
+            Some(capacity) if maximum > capacity as f64 => {
+                format!("0–{maximum:.0} messages · current capacity {capacity}")
+            }
             Some(capacity) => format!("0–{capacity} messages"),
             None => format!("Capacity unavailable · scale 0–{maximum:.0} observed"),
         };
         let fill = queue.and_then(|queue| model::percentage(queue.used_msgs?, queue.max_msgs?));
         div().id("msgq-detail").debug_selector(|| "msgq-detail".into())
-            .flex().flex_col().flex_grow(1.).flex_shrink_0().gap_4()
-            .child(div().flex().items_center().justify_between().flex_wrap().gap_3()
+            .flex().flex_col().flex_1().min_h_0().gap_3()
+            .child(div().flex().flex_shrink_0().items_center().justify_between().flex_wrap().gap_3()
                 .child(div().text_lg().font_semibold().child("Message queue details"))
                 .child(div().debug_selector(|| "back-to-objects".into()).child(
                     Button::new("back-to-objects").label("Back to Kernel objects")
@@ -95,11 +92,11 @@ impl ThreadsApp {
                             this.show_kernel_objects(this.object_kind, window, cx);
                         })))))
             .when(queue.is_none(), |el| el.child(
-                div().debug_selector(|| "msgq-absent".into()).p_4().rounded_lg()
-                    .border_1().border_color(rgb(BORDER)).child(
-                        "This message queue is not present in the selected frame. Move to another frame or return to Kernel objects. Current values are not carried forward.")))
+                div().debug_selector(|| "msgq-absent".into()).p_2().flex_shrink_0().rounded_lg()
+                    .border_1().border_color(rgb(BORDER)).child(crate::layout::note("msgq-absent-note",
+                        "This message queue is not present in the selected frame. Move to another frame or return to Kernel objects. Current values are not carried forward."))))
             .child(div().debug_selector(|| "msgq-summary".into()).flex().flex_wrap().flex_shrink_0()
-                .gap_4().p_4().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
+                .gap_3().p_3().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
                 .child(field("Name", key.name.clone()))
                 .child(field("Address", format!("0x{:08x}", key.address)))
                 .child(field("Depth", count(queue.and_then(|q| q.used_msgs))))
@@ -109,20 +106,20 @@ impl ThreadsApp {
                 .when_some(fill, |el, fill| el.child(div().w_full().child(
                     Progress::new("msgq-capacity").value(fill.clamp(0., 100.) as f32).color(rgb(color))
                         .accessibility_label("Queued messages relative to capacity").h(px(6.))))))
-            .child(div().flex().flex_grow(1.).flex_shrink_0().flex_wrap().gap_4()
-                .child(div().debug_selector(|| "msgq-history".into()).flex_1().min_w(px(320.)).min_h(px(280.))
-                    .p_4().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD)).flex().flex_col().gap_3()
+            .child(div().flex().flex_1().min_h_0().gap_3()
+                .child(div().debug_selector(|| "msgq-history".into()).flex_1().min_w_0().min_h_0()
+                    .p_3().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD)).flex().flex_col().gap_2()
                     .child(div().text_sm().font_semibold().child("Queue depth"))
                     .child(div().text_xs().text_color(rgb(MUTED)).child(scale))
-                    .child(div().debug_selector(|| "msgq-depth-plot".into()).flex_1().min_h(px(180.))
+                    .child(div().debug_selector(|| "msgq-depth-plot".into()).flex_1().min_h_0()
                         .child(TimeSeriesChart::count("msgq-depth", series, rgb(color).into(), maximum)))
                     .child(div().text_xs().text_color(rgb(MUTED)).child(caption)))
-                .child(div().debug_selector(|| "msgq-wait-queue".into()).w(px(280.)).min_w(px(240.))
-                    .p_4().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD)).flex().flex_col().gap_3()
+                .child(div().debug_selector(|| "msgq-wait-queue".into()).w(px(200.)).flex_shrink_0().min_h_0()
+                    .p_3().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD)).flex().flex_col().gap_2()
                     .child(div().text_sm().font_semibold().child("Waiting threads"))
                     .child(div().text_xs().text_color(rgb(MUTED)).child(waiter_context(queue)))
                     .child(crate::wait_queue::threads("msgq", waiters, crate::wait_queue::Layout::Vertical))))
-            .child(div().text_xs().text_color(rgb(MUTED)).child(
+            .child(crate::layout::note("msgq-note",
                 "Recorded queue depth, not individual send/receive events. Operations between snapshots may leave no trace. Missing readings break the history line."))
     }
 }
@@ -158,6 +155,56 @@ mod tests {
         frames[0].msgqs[1].used_msgs = None;
         assert_eq!(depth_history(&frames, 0, &key).0.points[0].value, None);
         assert_eq!(depth_history(&frames, 0, &key).1, 1.);
+    }
+
+    #[test]
+    fn shrinking_capacity_preserves_past_depth() {
+        let base = model::parse(include_str!("../test-data/kernel-objects-minimal.json"))
+            .unwrap()
+            .remove(0);
+        let mut frames = vec![base; 3];
+        let key = MessageQueueKey {
+            address: 16384,
+            name: "messages".into(),
+        };
+        for (frame, (time, capacity, depth)) in
+            frames
+                .iter_mut()
+                .zip([(0., 10, 10), (1., 4, 4), (2., 100, 80)])
+        {
+            frame.elapsed_seconds = Some(time);
+            frame.msgqs[0].max_msgs = Some(capacity);
+            frame.msgqs[0].used_msgs = Some(depth);
+        }
+        let (series, maximum) = depth_history(&frames, 1, &key);
+        assert_eq!(maximum, 10.);
+        assert_eq!(
+            series.points.iter().map(|p| p.value).collect::<Vec<_>>(),
+            vec![Some(10.), Some(4.)]
+        );
+        assert_eq!(
+            depth_history(&frames, 0, &key).1,
+            10.,
+            "future capacities must not set the scale"
+        );
+        frames[0].msgqs[0].used_msgs = Some(2);
+        assert_eq!(
+            depth_history(&frames, 1, &key).1,
+            10.,
+            "past capacity remains visible even with lower usage"
+        );
+        frames[0].msgqs[0].max_msgs = None;
+        frames[1].msgqs[0].used_msgs = Some(9);
+        assert_eq!(
+            depth_history(&frames, 1, &key).1,
+            9.,
+            "reported counts must not be clipped to a smaller capacity"
+        );
+        frames[0].msgqs[0].object.name = "replacement".into();
+        frames[0].msgqs[0].max_msgs = Some(500);
+        frames[0].msgqs[0].used_msgs = Some(400);
+        frames[1].msgqs[0].used_msgs = Some(4);
+        assert_eq!(depth_history(&frames, 1, &key).1, 4.);
     }
 
     #[test]

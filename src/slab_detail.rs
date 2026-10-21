@@ -12,18 +12,12 @@ fn usage_history(frames: &[Frame], current: usize, key: &MemorySlabKey) -> (Char
     let series = model::chart_series(frames, current, |frame| {
         key.in_frame(frame)?.num_used.map(|used| used as f64)
     });
-    let maximum = key
-        .in_frame(&frames[current])
-        .and_then(|slab| slab.num_blocks)
-        .filter(|capacity| *capacity > 0)
+    let maximum = frames[..=current]
+        .iter()
+        .filter_map(|frame| key.in_frame(frame)?.num_blocks)
         .map(|capacity| capacity as f64)
-        .unwrap_or_else(|| {
-            series
-                .points
-                .iter()
-                .filter_map(|point| point.value)
-                .fold(1., f64::max)
-        });
+        .chain(series.points.iter().filter_map(|point| point.value))
+        .fold(1., f64::max);
     (series, maximum)
 }
 
@@ -45,9 +39,9 @@ fn field(title: &'static str, value: String) -> impl IntoElement {
         .flex_1()
         .flex()
         .flex_col()
-        .gap_2()
+        .gap_1()
         .child(div().text_xs().text_color(rgb(MUTED)).child(title))
-        .child(div().text_sm().child(value))
+        .child(crate::layout::note(title, value).text_sm())
 }
 
 impl ThreadsApp {
@@ -73,6 +67,9 @@ impl ThreadsApp {
         let caption = series.caption.clone();
         let scale = match slab.and_then(|slab| slab.num_blocks) {
             Some(0) => format!("Zero capacity · scale 0–{maximum:.0} observed"),
+            Some(capacity) if maximum > capacity as f64 => {
+                format!("0–{maximum:.0} blocks · current capacity {capacity}")
+            }
             Some(capacity) => format!("0–{capacity} blocks"),
             None => format!("Capacity unavailable · scale 0–{maximum:.0} observed"),
         };
@@ -86,8 +83,8 @@ impl ThreadsApp {
             None => "—".into(),
         };
         div().id("slab-detail").debug_selector(|| "slab-detail".into())
-            .flex().flex_col().flex_grow(1.).flex_shrink_0().gap_4()
-            .child(div().flex().items_center().justify_between().flex_wrap().gap_3()
+            .flex().flex_col().flex_1().min_h_0().gap_3()
+            .child(div().flex().flex_shrink_0().items_center().justify_between().flex_wrap().gap_3()
                 .child(div().text_lg().font_semibold().child("Memory slab details"))
                 .child(div().debug_selector(|| "back-to-objects".into()).child(
                     Button::new("back-to-objects").label("Back to Kernel objects")
@@ -95,11 +92,11 @@ impl ThreadsApp {
                             this.show_kernel_objects(this.object_kind, window, cx);
                         })))))
             .when(slab.is_none(), |el| el.child(
-                div().debug_selector(|| "slab-absent".into()).p_4().rounded_lg()
-                    .border_1().border_color(rgb(BORDER)).child(
-                        "This memory slab is not present in the selected frame. Move to another frame or return to Kernel objects. Current values are not carried forward.")))
+                div().debug_selector(|| "slab-absent".into()).p_2().flex_shrink_0().rounded_lg()
+                    .border_1().border_color(rgb(BORDER)).child(crate::layout::note("slab-absent-note",
+                        "This memory slab is not present in the selected frame. Move to another frame or return to Kernel objects. Current values are not carried forward."))))
             .child(div().debug_selector(|| "slab-summary".into()).flex().flex_wrap().flex_shrink_0()
-                .gap_4().p_4().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
+                .gap_3().p_3().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
                 .child(field("Name", key.name.clone()))
                 .child(field("Address", format!("0x{:08x}", key.address)))
                 .child(field("Blocks in use", count(slab.and_then(|s| s.num_used))))
@@ -123,19 +120,19 @@ impl ThreadsApp {
                             .accessibility_label(fill.map(|value| format!("Blocks in use: {value:.1}% of capacity"))
                                 .unwrap_or_else(|| "Block usage ratio unavailable".into()))
                             .h(px(6.))))))
-            .child(div().flex().flex_grow(1.).flex_shrink_0().flex_wrap().gap_4()
-                .child(div().debug_selector(|| "slab-history".into()).flex_1().min_w(px(320.)).min_h(px(280.))
-                    .p_4().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD)).flex().flex_col().gap_3()
+            .child(div().flex().flex_1().min_h_0().gap_3()
+                .child(div().debug_selector(|| "slab-history".into()).flex_1().min_w_0().min_h_0()
+                    .p_3().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD)).flex().flex_col().gap_2()
                     .child(div().text_sm().font_semibold().child("Blocks in use"))
                     .child(div().text_xs().text_color(rgb(MUTED)).child(scale))
-                    .child(div().debug_selector(|| "slab-usage-plot".into()).flex_1().min_h(px(180.))
+                    .child(div().debug_selector(|| "slab-usage-plot".into()).flex_1().min_h_0()
                         .child(TimeSeriesChart::count("slab-usage", series, rgb(color).into(), maximum)))
                     .child(div().text_xs().text_color(rgb(MUTED)).child(caption)))
-                .child(div().debug_selector(|| "slab-wait-queue".into()).w(px(280.)).min_w(px(240.))
-                    .p_4().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD)).flex().flex_col().gap_3()
+                .child(div().debug_selector(|| "slab-wait-queue".into()).w(px(200.)).flex_shrink_0().min_h_0()
+                    .p_3().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD)).flex().flex_col().gap_2()
                     .child(div().text_sm().font_semibold().child("Waiting threads"))
                     .child(crate::wait_queue::threads("slab", waiters, crate::wait_queue::Layout::Vertical))))
-            .child(div().text_xs().text_color(rgb(MUTED)).child(
+            .child(crate::layout::note("slab-note",
                 "Sampled block counts, not individual allocation/free events. Peak is the target-reported high-water mark when tracked. Missing readings break the history line."))
     }
 }
@@ -192,6 +189,56 @@ mod tests {
         assert_eq!(frames[6].mem_slabs[2].num_used, Some(0));
         assert_eq!(frames[6].mem_slabs[3].num_used, None);
         assert_eq!(frames[6].mem_slabs[4].num_blocks, Some(0));
+    }
+
+    #[test]
+    fn shrinking_capacity_preserves_past_usage() {
+        let base = model::parse(include_str!("../test-data/kernel-objects-minimal.json"))
+            .unwrap()
+            .remove(0);
+        let mut frames = vec![base; 3];
+        let key = MemorySlabKey {
+            address: 24576,
+            name: "slab".into(),
+        };
+        for (frame, (time, capacity, used)) in
+            frames
+                .iter_mut()
+                .zip([(0., 10, 10), (1., 4, 4), (2., 100, 80)])
+        {
+            frame.elapsed_seconds = Some(time);
+            frame.mem_slabs[0].num_blocks = Some(capacity);
+            frame.mem_slabs[0].num_used = Some(used);
+        }
+        let (series, maximum) = usage_history(&frames, 1, &key);
+        assert_eq!(maximum, 10.);
+        assert_eq!(
+            series.points.iter().map(|p| p.value).collect::<Vec<_>>(),
+            vec![Some(10.), Some(4.)]
+        );
+        assert_eq!(
+            usage_history(&frames, 0, &key).1,
+            10.,
+            "future capacities must not set the scale"
+        );
+        frames[0].mem_slabs[0].num_used = Some(2);
+        assert_eq!(
+            usage_history(&frames, 1, &key).1,
+            10.,
+            "past capacity remains visible even with lower usage"
+        );
+        frames[0].mem_slabs[0].num_blocks = None;
+        frames[1].mem_slabs[0].num_used = Some(9);
+        assert_eq!(
+            usage_history(&frames, 1, &key).1,
+            9.,
+            "reported counts must not be clipped to a smaller capacity"
+        );
+        frames[0].mem_slabs[0].object.name = "replacement".into();
+        frames[0].mem_slabs[0].num_blocks = Some(500);
+        frames[0].mem_slabs[0].num_used = Some(400);
+        frames[1].mem_slabs[0].num_used = Some(4);
+        assert_eq!(usage_history(&frames, 1, &key).1, 4.);
     }
 
     #[test]

@@ -53,9 +53,9 @@ fn field(title: &'static str, value: String) -> impl IntoElement {
         .flex_1()
         .flex()
         .flex_col()
-        .gap_2()
+        .gap_1()
         .child(div().text_xs().text_color(rgb(MUTED)).child(title))
-        .child(div().text_sm().child(value))
+        .child(crate::layout::note(title, value).text_sm())
 }
 
 fn depth_history(frames: &[Frame], current: usize, key: &MutexKey) -> ChartSeries {
@@ -69,13 +69,9 @@ fn chart_card(chart: StepAreaChart, caption: String) -> impl IntoElement {
         .debug_selector(|| "mutex-depth-chart".into())
         .flex()
         .flex_col()
-        .gap_3()
-        .min_h(px(390.))
-        .p_4()
-        .rounded_lg()
-        .border_1()
-        .border_color(rgb(BORDER))
-        .bg(rgb(CARD))
+        .flex_1()
+        .min_h_0()
+        .gap_2()
         .child(
             div()
                 .text_sm()
@@ -115,7 +111,8 @@ fn chart_card(chart: StepAreaChart, caption: String) -> impl IntoElement {
         .child(
             div()
                 .debug_selector(|| "mutex-area-plot".into())
-                .h(px(300.))
+                .flex_1()
+                .min_h_0()
                 .child(chart),
         )
         .child(div().text_xs().text_color(rgb(MUTED)).child(caption))
@@ -159,8 +156,8 @@ impl ThreadsApp {
             details,
         );
         div().id("mutex-detail").debug_selector(|| "mutex-detail".into())
-            .flex().flex_col().flex_grow(1.).flex_shrink_0().gap_4()
-            .child(div().flex().items_center().justify_between().flex_wrap().gap_3()
+            .flex().flex_col().flex_1().min_h_0().gap_3()
+            .child(div().flex().flex_shrink_0().items_center().justify_between().flex_wrap().gap_3()
                 .child(div().text_lg().font_semibold().child("Mutex details"))
                 .child(div().debug_selector(|| "back-to-objects".into()).child(
                     Button::new("back-to-objects").label("Back to Kernel objects")
@@ -168,7 +165,7 @@ impl ThreadsApp {
                             this.show_kernel_objects(this.object_kind, window, cx);
                         })))))
             .child(div().debug_selector(|| "mutex-summary".into()).flex().flex_wrap().flex_shrink_0()
-                .gap_4().p_4().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
+                .gap_3().p_3().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
                 .child(field("Name", key.name.clone()))
                 .child(field("Address", format!("0x{:08x}", key.address)))
                 .child(div().debug_selector(|| "mutex-state".into()).min_w(px(160.)).flex_1().flex().flex_col().gap_2()
@@ -179,18 +176,15 @@ impl ThreadsApp {
                     .map(|n| n.to_string()).unwrap_or_else(|| "—".into())))
                 .child(field("Owner", mutex.map(|m| m.owner_label()).unwrap_or_else(|| "—".into())))
                 .child(field("Waiting threads", waiters.map(|w| w.len().to_string()).unwrap_or_else(|| "—".into()))))
-            .child(div().flex().flex_wrap().items_stretch().gap_4()
-            .child(div().debug_selector(|| "mutex-history".into()).flex_1().min_w(px(400.)).flex().flex_col().gap_3()
-                .p_4().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
-                .child(div().text_sm().font_semibold().child("Mutex history"))
-                .child(div().text_xs().text_color(rgb(MUTED)).child(
-                    "Two independent sampled counts. Hover for source time, depth, owner and waiting-thread count."))
+            .child(div().flex().flex_1().min_h_0().items_stretch().gap_3()
+            .child(div().debug_selector(|| "mutex-history".into()).flex_1().min_w_0().min_h_0().flex().flex_col().gap_2()
+                .p_3().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
                 .child(chart_card(chart, caption)))
-            .child(div().debug_selector(|| "mutex-wait-queue".into()).w(px(280.)).min_w(px(240.)).flex_shrink_0().flex().flex_col().gap_3()
-                .p_4().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
+            .child(div().debug_selector(|| "mutex-wait-queue".into()).w(px(200.)).min_h_0().flex_shrink_0().flex().flex_col().gap_3()
+                .p_3().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
                 .child(div().text_sm().font_semibold().child("Wait queue"))
                 .child(crate::wait_queue::threads("mutex", waiters, crate::wait_queue::Layout::Vertical))))
-            .child(div().text_xs().text_color(rgb(MUTED)).child(
+            .child(crate::layout::note("mutex-note",
                 "Sample-and-hold until the next captured timestamp, not the exact lock/unlock time. Negative positions encode waiter counts, not negative depth. Missing readings break each area independently. No future readings are drawn."))
     }
 }

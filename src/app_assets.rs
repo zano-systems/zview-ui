@@ -34,6 +34,9 @@ mod tests {
             "icons/circle-dashed.svg",
             "icons/play.svg",
             "icons/pause.svg",
+            "icons/plus.svg",
+            "icons/minus.svg",
+            "icons/maximize.svg",
         ] {
             assert!(AppAssets.load(path).unwrap().is_some(), "{path}");
         }

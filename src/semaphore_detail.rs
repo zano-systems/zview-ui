@@ -47,8 +47,8 @@ impl ThreadsApp {
         div()
             .id("semaphore-detail")
             .debug_selector(|| "semaphore-detail".into())
-            .flex().flex_col().flex_grow(1.).flex_shrink_0().gap_4()
-            .child(div().flex().items_center().justify_between().flex_wrap().gap_3()
+            .flex().flex_col().flex_1().min_h_0().gap_3()
+            .child(div().flex().flex_shrink_0().items_center().justify_between().flex_wrap().gap_3()
                 .child(div().text_lg().font_semibold().child("Semaphore details"))
                 .child(div().debug_selector(|| "back-to-objects".into()).child(
                     Button::new("back-to-objects").label("Back to Kernel objects")
@@ -57,7 +57,7 @@ impl ThreadsApp {
                         })),
                 )))
             .child(div().debug_selector(|| "semaphore-summary".into()).flex().flex_wrap()
-                .flex_shrink_0().gap_4().p_4().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
+                .flex_shrink_0().gap_3().p_3().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
                 .child(field("Name", key.name.clone()))
                 .child(field("Address", format!("0x{:08x}", key.address)))
                 .child(field("Count", sem.and_then(|sem| sem.count).map(|count| count.to_string()).unwrap_or_else(|| "—".into())))
@@ -70,11 +70,11 @@ impl ThreadsApp {
                             .accessibility_label("Available semaphore count relative to limit").h(px(6.)),
                     ))
                 }))
-            .child(div().flex().flex_wrap().items_stretch().flex_grow(1.).flex_shrink_0().gap_4()
+            .child(div().flex().items_stretch().flex_1().min_h_0().gap_3()
                 .child(div().debug_selector(|| "semaphore-history".into())
-                    .flex_1().min_w(px(400.)).min_h(px(280.)).p_4().rounded_lg()
+                    .flex_1().min_w_0().min_h_0().p_3().rounded_lg()
                     .border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
-                    .flex().flex_col().gap_3()
+                    .flex().flex_col().gap_2()
                     .child(div().text_sm().font_semibold().child("Available tokens & wait queue"))
                     .child(div().text_xs().text_color(rgb(MUTED)).child(scale))
                     .child(div().flex().flex_wrap().gap_4().text_xs()
@@ -83,16 +83,16 @@ impl ThreadsApp {
                         .child(div().text_color(rgb(GREEN)).child("Green · Full"))
                         .child(div().text_color(rgb(0xddb66b)).child("Yellow · Tokens available"))
                         .child(div().text_color(rgb(0xf18b94)).child("Red · Empty")))
-                    .child(div().debug_selector(|| "semaphore-count-plot".into()).flex_1().min_h(px(300.))
+                    .child(div().debug_selector(|| "semaphore-count-plot".into()).flex_1().min_h_0()
                         .child(StepAreaChart::new(series, waiting_history, limits)))
                     .child(div().text_xs().text_color(rgb(MUTED)).child(caption)))
                 .child(div().debug_selector(|| "semaphore-wait-queue".into())
-                    .w(px(280.)).min_w(px(240.)).flex_shrink_0().p_4().rounded_lg()
+                    .w(px(200.)).min_h_0().flex_shrink_0().p_3().rounded_lg()
                     .border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
                     .flex().flex_col().gap_3()
                     .child(div().text_sm().font_semibold().child("Wait queue"))
                     .child(crate::wait_queue::threads("semaphore", waiters, crate::wait_queue::Layout::Vertical))))
-            .child(div().text_xs().text_color(rgb(MUTED)).child(
+            .child(crate::layout::note("semaphore-note",
                 "Sample-and-hold: each value is held until the next captured timestamp, not the exact operation time. Gaps start at missing readings. Negative positions encode waiter counts, not negative tokens. No persistent dots or future readings are drawn.",
             ))
     }
@@ -104,9 +104,9 @@ fn field(title: &'static str, value: String) -> impl IntoElement {
         .flex_1()
         .flex()
         .flex_col()
-        .gap_2()
+        .gap_1()
         .child(div().text_xs().text_color(rgb(MUTED)).child(title))
-        .child(div().text_sm().child(value))
+        .child(crate::layout::note(title, value).text_sm())
 }
 
 #[cfg(test)]

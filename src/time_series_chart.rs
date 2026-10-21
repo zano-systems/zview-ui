@@ -18,6 +18,8 @@ pub(super) struct TimeSeriesChart {
     series: ChartSeries,
     color: Hsla,
     count_max: Option<f64>,
+    show_dots: bool,
+    shade_unknown_counts: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -60,6 +62,8 @@ impl TimeSeriesChart {
             series,
             color,
             count_max: None,
+            show_dots: true,
+            shade_unknown_counts: false,
         }
     }
 
@@ -71,11 +75,63 @@ impl TimeSeriesChart {
             series,
             color,
             count_max: Some(maximum.max(1.)),
+            show_dots: true,
+            shade_unknown_counts: false,
         }
+    }
+
+    pub fn without_dots(mut self) -> Self {
+        self.show_dots = false;
+        self
+    }
+
+    /// Shade unavailable intervals without making up a numeric count or
+    /// covering future/unobserved playback space.
+    pub fn with_shaded_unknown_counts(mut self) -> Self {
+        self.shade_unknown_counts = true;
+        self
+    }
+
+    fn unknown_ranges(&self) -> Vec<(f64, f64)> {
+        let mut ranges = Vec::<(f64, f64)>::new();
+        for (index, sample) in self.series.points.iter().enumerate() {
+            if sample.value.is_some() {
+                continue;
+            }
+            let Some(end) = self.series.interval_end(index) else {
+                continue;
+            };
+            let start = sample.x.max(self.series.x_domain.0);
+            let end = end.min(self.series.x_domain.1);
+            if end <= start {
+                continue;
+            }
+            if let Some(last) = ranges.last_mut()
+                && last.1 == start
+            {
+                last.1 = end;
+            } else {
+                ranges.push((start, end));
+            }
+        }
+        ranges
     }
 
     fn held_index(&self, x: f64) -> Option<usize> {
         self.series.held_index(x)
+    }
+
+    fn hover_index(&self, x: f64) -> Option<usize> {
+        if !self.shade_unknown_counts {
+            return self.held_index(x);
+        }
+        if !x.is_finite() || x > self.series.view_end()? {
+            return None;
+        }
+        self.series
+            .points
+            .partition_point(|p| p.x <= x)
+            .checked_sub(1)
     }
 
     fn geometry(&self, size: Size<Pixels>) -> Geometry {
@@ -83,6 +139,30 @@ impl TimeSeriesChart {
             y_max: self.count_max.unwrap_or(100.),
             ..Geometry::new(size)
         }
+    }
+
+    fn unknown_bands(&self, geometry: Geometry) -> Vec<Bounds<Pixels>> {
+        self.unknown_ranges()
+            .into_iter()
+            .map(|(start, end)| {
+                let left = geometry.x(start, self.series.x_domain);
+                let right = geometry.x(end, self.series.x_domain);
+                Bounds::new(
+                    point(left, px(geometry.top)),
+                    size(right - left, px(geometry.height)),
+                )
+            })
+            .collect()
+    }
+
+    fn hover_position(&self, index: usize, geometry: Geometry) -> Option<Point<Pixels>> {
+        let sample = self.series.points.get(index)?;
+        let mut position = geometry.point(sample, self.series.x_domain).or_else(|| {
+            self.shade_unknown_counts
+                .then(|| point(geometry.x(sample.x, self.series.x_domain), px(geometry.top)))
+        })?;
+        position.x = position.x.max(px(geometry.left));
+        Some(position)
     }
 
     fn value_label(&self, value: f64) -> String {
@@ -107,6 +187,12 @@ impl Plot for TimeSeriesChart {
         let geometry = self.geometry(bounds.size);
         if geometry.width <= 0. || geometry.height <= 0. {
             return;
+        }
+        if self.shade_unknown_counts {
+            for mut band in self.unknown_bands(geometry) {
+                band.origin += bounds.origin;
+                window.paint_quad(fill(band, rgba(0xd1d5db26)));
+            }
         }
         for percent in [0., 50., 100.] {
             let y = geometry.top + (1. - percent / 100.) * geometry.height;
@@ -151,17 +237,22 @@ impl Plot for TimeSeriesChart {
                 }
                 // Retain visible single snapshots/isolated readings without
                 // inventing a duration for them.
-                for segment in self.series.segments() {
-                    if let [sample] = segment {
-                        let position =
-                            bounds.origin + geometry.point(sample, self.series.x_domain).unwrap();
-                        window.paint_quad(
-                            fill(
-                                Bounds::new(position - point(px(3.), px(3.)), size(px(6.), px(6.))),
-                                self.color,
-                            )
-                            .corner_radii(px(3.)),
-                        );
+                if self.show_dots {
+                    for segment in self.series.segments() {
+                        if let [sample] = segment {
+                            let position = bounds.origin
+                                + geometry.point(sample, self.series.x_domain).unwrap();
+                            window.paint_quad(
+                                fill(
+                                    Bounds::new(
+                                        position - point(px(3.), px(3.)),
+                                        size(px(6.), px(6.)),
+                                    ),
+                                    self.color,
+                                )
+                                .corner_radii(px(3.)),
+                            );
+                        }
                     }
                 }
             },
@@ -229,7 +320,7 @@ impl Plot for TimeSeriesChart {
         let (start, end) = self.series.x_domain;
         let x =
             start + ((position.x.as_f32() - geometry.left) / geometry.width) as f64 * (end - start);
-        let index = self.held_index(x).or_else(|| {
+        let index = self.hover_index(x).or_else(|| {
             // A small pixel target keeps isolated measurements reachable.
             // It still returns an exact source sample, never a synthetic value.
             self.series
@@ -241,9 +332,13 @@ impl Plot for TimeSeriesChart {
                     ((dot.x - position.x).abs() <= px(3.)).then_some(index)
                 })
         })?;
-        let mut dot = geometry.point(&self.series.points[index], self.series.x_domain)?;
-        dot.x = dot.x.max(px(geometry.left));
-        Some(TooltipState::new(index, dot, vec![dot]))
+        let position = self.hover_position(index, geometry)?;
+        let dots = if self.show_dots && self.series.points[index].value.is_some() {
+            vec![position]
+        } else {
+            vec![]
+        };
+        Some(TooltipState::new(index, position, dots))
     }
 
     fn tooltip(
@@ -255,13 +350,14 @@ impl Plot for TimeSeriesChart {
         cx: &mut App,
     ) -> Option<AnyElement> {
         let sample = self.series.points.get(state.index)?;
-        let value = sample.value?;
+        let value_label = match sample.value {
+            Some(value) => self.value_label(value),
+            None if self.shade_unknown_counts => "Unknown count".into(),
+            None => return None,
+        };
         let time = self.series.source_label(sample.x);
-        let mut dot = self
-            .geometry(bounds.size)
-            .point(sample, self.series.x_domain)?;
-        dot.x = dot.x.max(px(self.geometry(bounds.size).left));
-        let value_label = self.value_label(value);
+        let geometry = self.geometry(bounds.size);
+        let dot = self.hover_position(state.index, geometry)?;
         let width = (measure_text_width(&time.clone().into(), px(12.), window) + 48.)
             .max(measure_text_width(&value_label.clone().into(), px(12.), window) + 16.)
             .max(90.);
@@ -270,12 +366,18 @@ impl Plot for TimeSeriesChart {
                 .min_w(px(90.))
                 .w(px(width))
                 .gap(px(8.))
-                .cross_line(CrossLine::new(dot).span(6., self.geometry(bounds.size).height))
-                .dots([Dot::new(dot)
-                    .size(px(8.))
-                    .halo(px(20.))
-                    .stroke(cx.theme().background)
-                    .fill(self.color)])
+                .cross_line(CrossLine::new(dot).span(geometry.top, geometry.height))
+                .dots(if self.show_dots && sample.value.is_some() {
+                    vec![
+                        Dot::new(dot)
+                            .size(px(8.))
+                            .halo(px(20.))
+                            .stroke(cx.theme().background)
+                            .fill(self.color),
+                    ]
+                } else {
+                    vec![]
+                })
                 .child(
                     div()
                         .debug_selector(|| "percentage-tooltip-content".into())
@@ -331,6 +433,83 @@ mod tests {
             caption: String::new(),
             playhead: None,
         }
+    }
+
+    #[test]
+    fn unknown_count_bands_merge_gaps_clip_to_zoom_and_leave_future_blank() {
+        let mut data = series();
+        data.points = [
+            (0., Some(0.)),
+            (9., None),
+            (10., None),
+            (11., Some(0.)),
+            (12., None),
+            (15., Some(0.)),
+            (16., None),
+            (18., Some(0.)),
+            (20., Some(2.)),
+        ]
+        .into_iter()
+        .map(|(x, value)| ChartPoint { x, value })
+        .collect();
+        data.x_domain = (0., 24.);
+        let mut chart = TimeSeriesChart::count("backlog", data, rgb(0xffffff).into(), 2.)
+            .without_dots()
+            .with_shaded_unknown_counts();
+        assert!(!chart.show_dots);
+        let geometry = chart.geometry(size(px(320.), px(150.)));
+        let bands = chart.unknown_bands(geometry);
+        assert_eq!(bands.len(), 3);
+        for band in bands {
+            assert_eq!(band.top(), px(geometry.top));
+            assert_eq!(band.size.height, px(geometry.height));
+            assert!(
+                band.left() >= px(geometry.left)
+                    && band.right() <= px(geometry.left + geometry.width)
+            );
+        }
+        assert_eq!(
+            chart.unknown_ranges(),
+            vec![(9., 11.), (12., 15.), (16., 18.)]
+        );
+        assert_eq!(chart.hover_index(10.5), Some(2));
+        assert_eq!(chart.series.points[2].value, None);
+        assert_eq!(chart.hover_index(21.), None);
+        chart.series.x_domain = (9.5, 17.);
+        assert_eq!(
+            chart.unknown_ranges(),
+            vec![(9.5, 11.), (12., 15.), (16., 17.)]
+        );
+        chart.series.x_domain = (0., 24.);
+        chart.series.points.truncate(5);
+        assert_eq!(
+            chart.unknown_ranges(),
+            vec![(9., 11.)],
+            "a terminal unknown has no invented duration"
+        );
+        chart.series.playhead = Some(13.25);
+        assert_eq!(chart.unknown_ranges(), vec![(9., 11.), (12., 13.25)]);
+        assert_eq!(chart.hover_index(13.26), None);
+    }
+
+    #[gpui_kit::test]
+    fn backlog_hover_has_no_dots_and_unknown_count_is_not_a_numeric_zero(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            let chart = TimeSeriesChart::count("backlog", series(), rgb(0xffffff).into(), 100.)
+                .without_dots()
+                .with_shaded_unknown_counts();
+            let bounds = Bounds::new(point(px(0.), px(0.)), size(px(320.), px(150.)));
+            let g = chart.geometry(bounds.size);
+            let at = |x| point(g.x(x, chart.series.x_domain), px(g.top + 2.));
+            let known = chart.tooltip_state(at(0.), bounds, cx).unwrap();
+            assert!(known.dots.is_empty());
+            assert_eq!(chart.series.points[known.index].value, Some(0.));
+            let unknown = chart.tooltip_state(at(6.), bounds, cx).unwrap();
+            assert!(unknown.dots.is_empty());
+            assert_eq!(chart.series.points[unknown.index].value, None);
+            assert_eq!(chart.unknown_bands(g).len(), 1);
+            assert!(chart.tooltip_state(at(10.), bounds, cx).is_none());
+        });
     }
 
     #[test]

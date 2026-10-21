@@ -3,6 +3,13 @@ use gpui::{AppContext, Entity, Modifiers, TestAppContext, VisualTestContext, px,
 use gpui_kit::component::{Root, WindowExt};
 use gpui_kit::init;
 
+#[path = "heap_map_tests.rs"]
+mod heap_map_tests;
+#[path = "layout_tests.rs"]
+mod layout_tests;
+#[path = "workq_activity_tests.rs"]
+mod workq_activity_tests;
+
 /// This integration check deliberately requires the full, regenerated capture
 /// rather than silently falling back to a synthetic or map-less document.
 #[gpui_kit::test]
@@ -65,32 +72,16 @@ fn recorded_heap_maps_render_and_play_from_the_full_benchmark(cx: &mut TestAppCo
             window.draw(cx).clear(cx);
         });
         assert!(cx.debug_bounds("heap-map-metrics").is_some());
+        assert!(cx.debug_bounds("heap-fragmentation-plot").is_some());
         assert!(cx.debug_bounds("heap-map-unavailable").is_none());
         assert!(cx.debug_bounds("heap-absent").is_none());
         let source = &frames[index].heaps[0];
         let chunks = source.chunks.as_ref().unwrap();
-        let total: u64 = chunks.iter().map(|c| c.size).sum();
-        let row_bytes = total / 8;
-        let mut start = 0;
-        // Check that every captured chunk has rendered segments, in address
-        // order, with proportional widths. Account for row splitting exactly.
-        for (chunk_index, chunk) in chunks.iter().enumerate() {
-            let end = start + chunk.size;
-            for row in 0..8 {
-                let row_start = total * row / 8;
-                let row_end = total * (row + 1) / 8;
-                let span = end.min(row_end).saturating_sub(start.max(row_start));
-                if span > 0 {
-                    let bounds = cx
-                        .debug_bounds(selector(format!("heap-map-{row}-{chunk_index}")))
-                        .expect("each original chunk is rendered");
-                    let width = cx.debug_bounds("heap-map").unwrap().size.width;
-                    let expected = width * (span as f32 / row_bytes as f32);
-                    assert!((bounds.size.width - expected).abs() < px(1.));
-                }
-            }
-            start = end;
-        }
+        assert!(!chunks.is_empty());
+        let strip = cx.debug_bounds("heap-map-strip").unwrap();
+        let summary = cx.debug_bounds("heap-summary").unwrap();
+        assert!(strip.size.width >= summary.size.width - px(28.));
+        assert!(strip.size.height <= px(48.), "the map is a single strip");
         let known_waiters = source.waiters.as_ref().unwrap();
         assert_eq!(
             cx.debug_bounds("heap-waiter-0").is_some(),
@@ -115,7 +106,7 @@ fn recorded_heap_maps_render_and_play_from_the_full_benchmark(cx: &mut TestAppCo
         });
         window.draw(cx).clear(cx);
     });
-    let chunk = cx.debug_bounds("heap-map-0-0").unwrap().center();
+    let chunk = cx.debug_bounds("heap-map-strip").unwrap().center();
     cx.simulate_event(gpui::MouseMoveEvent {
         position: chunk,
         ..Default::default()
@@ -162,7 +153,8 @@ fn recorded_heap_maps_render_and_play_from_the_full_benchmark(cx: &mut TestAppCo
     let map = cx.debug_bounds("heap-map").unwrap();
     let history = cx.debug_bounds("heap-history").unwrap();
     assert!(map.right() <= px(1000.));
-    assert!(map.top() >= history.bottom());
+    assert!(map.bottom() <= history.top());
+    assert!(map.bottom() <= cx.debug_bounds("session-footer").unwrap().top());
     cx.simulate_keystrokes("escape");
     app.read_with(&cx, |app, _| assert_eq!(app.screen, Screen::KernelObjects));
 }
@@ -300,9 +292,11 @@ fn heap_maps_render_legacy_empty_invalid_and_narrow_layouts(cx: &mut TestAppCont
     let history = cx.debug_bounds("heap-history").unwrap();
     let map = cx.debug_bounds("heap-map").unwrap();
     assert!(history.top() >= summary.bottom());
-    assert!(map.top() >= history.bottom());
+    assert!(map.top() >= summary.bottom());
+    assert!(map.bottom() <= history.top());
     assert!(map.right() <= px(1000.));
-    assert!(cx.debug_bounds("heap-allocated-plot").unwrap().size.height >= px(180.));
+    assert!(cx.debug_bounds("heap-allocated-plot").unwrap().size.height >= px(80.));
+    assert!(cx.debug_bounds("heap-wait-queue").unwrap().bottom() <= px(680.));
 }
 
 #[gpui_kit::test]
@@ -613,6 +607,13 @@ fn every_chart_supports_independent_wheel_zoom_and_fit(cx: &mut TestAppContext) 
                     }),
                     charts!["workq-backlog"],
                 ),
+                (
+                    Screen::Heap(super::model::HeapKey {
+                        address: f.heaps[0].address,
+                        name: f.heaps[0].name.clone(),
+                    }),
+                    charts!["heap-allocated", "heap-fragmentation"],
+                ),
             ]
         })
     });
@@ -735,6 +736,43 @@ fn real_capture_playback_matches_acquisition_timestamps(cx: &mut TestAppContext)
     cx.executor().advance_clock(Duration::from_secs(60));
     cx.run_until_parked();
     app.read_with(&cx, |app, _| assert_eq!(app.frame, 0));
+}
+
+#[gpui_kit::test]
+fn playback_handles_timestamps_beyond_timer_range(cx: &mut TestAppContext) {
+    use std::time::Duration;
+    let (app, mut cx) = setup(cx);
+    for end in [1e20, 1e100] {
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                let document = serde_json::json!([
+                    {"threads": [], "elapsed_seconds": 0.},
+                    {"threads": [], "elapsed_seconds": end},
+                ]);
+                app.frames = super::model::parse(&document.to_string()).unwrap();
+                app.reset_playback(window, cx);
+                app.toggle_playback(window, cx);
+                assert!(app.playing);
+                let delay = app.playback_tick(0., window, cx).unwrap();
+                assert!(delay > Duration::ZERO && delay <= Duration::from_secs(1));
+            });
+        });
+        cx.run_until_parked();
+        cx.executor().advance_clock(Duration::from_secs(1));
+        cx.run_until_parked();
+        app.read_with(&cx, |app, cx| {
+            assert!(app.playing);
+            assert_eq!(app.frame, 0);
+            assert_eq!(app.playback_time(cx), Some(1.));
+        });
+        cx.update(|window, cx| app.update(cx, |app, cx| app.toggle_playback(window, cx)));
+        cx.executor().advance_clock(Duration::from_secs(5));
+        cx.run_until_parked();
+        app.read_with(&cx, |app, _| {
+            assert!(!app.playing);
+            assert_eq!(app.frame, 0);
+        });
+    }
 }
 
 #[gpui_kit::test]
@@ -888,6 +926,8 @@ fn workq_detail_preserves_session_and_handles_partial_absent_and_narrow_frames(
     assert!((pending.size.height - drain.size.height).abs() <= px(1.));
     assert!((pending.top() - history.top()).abs() <= px(1.));
     assert!((drain.bottom() - history.bottom()).abs() <= px(1.));
+    assert!(drain.left() >= pending.right());
+    assert!((history.size.width - 3. * pending.size.width).abs() <= px(2.));
     assert!(cx.debug_bounds("workq-pending-tag-0").is_some());
     let back = cx.debug_bounds("back-to-objects").unwrap().center();
     cx.simulate_click(back, Modifiers::default());
@@ -1063,8 +1103,10 @@ fn enriched_mutex_demo_renders_full_wait_queue_and_charts(cx: &mut TestAppContex
     let history = cx.debug_bounds("mutex-history").unwrap();
     assert!(history.top() >= summary.bottom());
     let depth = cx.debug_bounds("mutex-depth-chart").unwrap();
-    assert!(depth.size.height >= px(390.));
-    assert!(cx.debug_bounds("mutex-area-plot").unwrap().size.height >= px(300.));
+    assert!(depth.size.height > px(0.));
+    let plot = cx.debug_bounds("mutex-area-plot").unwrap();
+    assert!(plot.size.height >= px(80.), "{plot:?}");
+    assert!(history.bottom() <= cx.debug_bounds("session-footer").unwrap().top());
 }
 
 #[gpui_kit::test]
@@ -1416,6 +1458,11 @@ fn single_click_and_return_controls_render_the_right_screen(cx: &mut TestAppCont
     assert!(cx.debug_bounds("thread-detail").is_some());
     assert!(cx.debug_bounds("thread-table").is_none());
     assert!(cx.debug_bounds("threads-breadcrumb").is_some());
+    assert!(cx.debug_bounds("breadcrumb-current").is_some());
+    assert!(cx.debug_bounds("object-type-breadcrumb").is_none());
+    app.read_with(&cx, |app, _| {
+        assert_eq!(app.screen.name(), Some("stress_id"));
+    });
     assert!(cx.debug_bounds("thread-entry-source").is_some());
     for chart in ["thread-cpu", "thread-load"] {
         assert!(
@@ -1441,6 +1488,131 @@ fn single_click_and_return_controls_render_the_right_screen(cx: &mut TestAppCont
         assert_eq!(app.screen, Screen::Overview);
         assert_eq!(app.frame, 1);
     });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("breadcrumb-current").is_none());
+}
+
+#[gpui_kit::test]
+fn breadcrumbs_follow_every_kernel_route_and_type_filter(cx: &mut TestAppContext) {
+    use super::kernel_model::Kind;
+
+    let (app, mut cx) = setup(cx);
+    open_kernel_objects(&app, &mut cx);
+    let cases = [
+        (Kind::Heap, "kernel-row-Heap-4096", "heap"),
+        (Kind::MemorySlab, "kernel-row-Memory slab-24576", "slab"),
+        (
+            Kind::MessageQueue,
+            "kernel-row-Message queue-16384",
+            "messages",
+        ),
+        (Kind::Mutex, "kernel-row-Mutex-12288", "gate"),
+        (Kind::Semaphore, "kernel-row-Semaphore-8192", "gate"),
+        (Kind::WorkQueue, "kernel-row-Work queue-28672", "work"),
+    ];
+    for width in [1480., 1000.] {
+        cx.simulate_resize(size(px(width), px(940.)));
+        for (kind, row, name) in cases {
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.frame = 0;
+                    app.sync_heaps(window, cx);
+                    app.show_kernel_objects(None, window, cx);
+                });
+                window.draw(cx).clear(cx);
+            });
+            assert!(cx.debug_bounds("breadcrumb-current").is_none());
+            assert!(cx.debug_bounds("object-type-breadcrumb").is_none());
+            let row_position = cx.debug_bounds(row).unwrap().center();
+            cx.simulate_click(row_position, Modifiers::default());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            app.read_with(&cx, |app, _| {
+                assert_eq!(app.screen.object_kind(), Some(kind));
+                assert_eq!(app.screen.name(), Some(name));
+                // The path must use the opened object's type, not the list filter.
+                assert_eq!(app.object_kind, None);
+            });
+            for selector in [
+                "objects-breadcrumb",
+                "object-type-breadcrumb",
+                "breadcrumb-current",
+            ] {
+                let bounds = cx.debug_bounds(selector).expect("full detail path");
+                assert!(bounds.size.width > px(0.));
+                assert!(bounds.left() >= px(0.) && bounds.right() <= px(width));
+                assert!(bounds.top() >= px(0.) && bounds.bottom() <= px(940.));
+            }
+            assert!(cx.debug_bounds("threads-breadcrumb").is_none());
+
+            // Keep the route even when a later frame no longer contains the object.
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.object_search
+                        .update(cx, |input, cx| input.set_value(name, window, cx));
+                    app.step(true, window, cx);
+                });
+                window.draw(cx).clear(cx);
+            });
+            assert!(cx.debug_bounds("breadcrumb-current").is_some());
+            app.read_with(&cx, |app, _| {
+                assert_eq!(app.frame, 1);
+                assert_eq!(app.screen.name(), Some(name));
+            });
+            let heap = app.read_with(&cx, |app, cx| app.heap.read(cx).selected_value().cloned());
+            let breadcrumb = cx.debug_bounds("object-type-breadcrumb").unwrap().center();
+            cx.simulate_click(breadcrumb, Modifiers::default());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            app.read_with(&cx, |app, cx| {
+                assert_eq!(app.screen, Screen::KernelObjects);
+                assert_eq!(app.object_kind, Some(kind));
+                assert_eq!(app.frame, 1);
+                assert_eq!(app.heap.read(cx).selected_value(), heap.as_ref());
+                assert!(app.object_search.read(cx).value().is_empty());
+            });
+            assert!(cx.debug_bounds("object-type-breadcrumb").is_some());
+            assert!(cx.debug_bounds("breadcrumb-current").is_none());
+
+            // Kernel objects is also a parent link on every type-filtered list.
+            let breadcrumb = cx.debug_bounds("objects-breadcrumb").unwrap().center();
+            cx.simulate_click(breadcrumb, Modifiers::default());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            app.read_with(&cx, |app, _| {
+                assert_eq!(app.screen, Screen::KernelObjects);
+                assert_eq!(app.object_kind, None);
+                assert_eq!(app.frame, 1);
+            });
+            assert!(cx.debug_bounds("objects-breadcrumb").is_none());
+            assert!(cx.debug_bounds("object-type-breadcrumb").is_none());
+
+            // Opening from a filtered/searched list must not change the root
+            // breadcrumb's destination into that previous list.
+            cx.update(|window, cx| {
+                app.update(cx, |app, cx| {
+                    app.frame = 0;
+                    app.sync_heaps(window, cx);
+                    app.show_kernel_objects(Some(kind), window, cx);
+                    app.object_search
+                        .update(cx, |input, cx| input.set_value(name, window, cx));
+                });
+                window.draw(cx).clear(cx);
+            });
+            let row_position = cx.debug_bounds(row).unwrap().center();
+            cx.simulate_click(row_position, Modifiers::default());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            let breadcrumb = cx.debug_bounds("objects-breadcrumb").unwrap().center();
+            cx.simulate_click(breadcrumb, Modifiers::default());
+            cx.update(|window, cx| window.draw(cx).clear(cx));
+            app.read_with(&cx, |app, cx| {
+                assert_eq!(app.screen, Screen::KernelObjects);
+                assert_eq!(app.object_kind, None);
+                assert!(app.object_search.read(cx).value().is_empty());
+                assert_eq!(app.frame, 0);
+            });
+            for (_, row, _) in cases {
+                assert!(cx.debug_bounds(row).is_some(), "all types must be visible");
+            }
+        }
+    }
 }
 
 #[gpui_kit::test]
@@ -1474,10 +1646,10 @@ fn overview_charts_fill_spare_height_and_keep_the_table_clear(cx: &mut TestAppCo
     cx.update(|window, cx| window.draw(cx).clear(cx));
     let cpu = cx.debug_bounds("cpu").unwrap();
     assert!(
-        cpu.size.height >= original + px(250.),
-        "chart should absorb extra window height"
+        cpu.size.height >= original + px(100.),
+        "charts and the table should share extra window height"
     );
-    assert!(cx.debug_bounds("cpu-plot").unwrap().size.height >= plot + px(250.));
+    assert!(cx.debug_bounds("cpu-plot").unwrap().size.height >= plot + px(100.));
     for chart in ["stack", "heap"] {
         assert_eq!(cx.debug_bounds(chart).unwrap().size.height, cpu.size.height);
     }
@@ -1492,13 +1664,13 @@ fn overview_charts_fill_spare_height_and_keep_the_table_clear(cx: &mut TestAppCo
     let mut charts = Vec::new();
     for chart in ["cpu", "stack", "heap"] {
         let bounds = cx.debug_bounds(chart).unwrap();
-        assert!(bounds.size.height >= px(240.));
+        assert!(bounds.size.height >= px(180.), "{chart}: {bounds:?}");
         charts.push(bounds);
     }
     let table = cx.debug_bounds("thread-table").unwrap();
     assert!(charts.iter().all(|chart| chart.bottom() <= table.top()));
 
-    // A long table uses scrolling, rather than squeezing the plots or overlapping them.
+    // Extra rows scroll inside the panel, without changing the screen layout.
     cx.simulate_resize(size(px(1480.), px(940.)));
     cx.update(|window, cx| {
         app.update(cx, |app, cx| {
@@ -1515,14 +1687,13 @@ fn overview_charts_fill_spare_height_and_keep_the_table_clear(cx: &mut TestAppCo
         window.draw(cx).clear(cx);
     });
     let cpu = cx.debug_bounds("cpu").unwrap();
-    assert!(cpu.size.height >= px(240.));
-    assert!(
-        cpu.size.height < original,
-        "charts should release spare space for a long table"
-    );
+    assert_eq!(cpu.size.height, original);
     let table = cx.debug_bounds("thread-table").unwrap();
     assert!(table.top() >= cpu.bottom());
-    assert!(table.bottom() > px(940.), "long tables should scroll");
+    assert!(table.bottom() <= cx.debug_bounds("session-footer").unwrap().top());
+    app.read_with(&cx, |app, _| {
+        assert!(app.thread_rows_scroll.max_offset().y > px(0.));
+    });
 }
 
 #[gpui_kit::test]
@@ -1964,8 +2135,13 @@ fn slab_detail_navigation_preserves_session_and_filters(cx: &mut TestAppContext)
         cx.update(|window, cx| window.draw(cx).clear(cx));
         app.read_with(&cx, |app, cx| {
             assert_eq!(app.screen, Screen::KernelObjects);
-            assert_eq!(app.object_kind, Some(super::kernel_model::Kind::MemorySlab));
-            assert_eq!(app.object_search.read(cx).value().as_str(), "slab");
+            if control == "back-to-objects" {
+                assert_eq!(app.object_kind, Some(super::kernel_model::Kind::MemorySlab));
+                assert_eq!(app.object_search.read(cx).value().as_str(), "slab");
+            } else {
+                assert_eq!(app.object_kind, None);
+                assert!(app.object_search.read(cx).value().is_empty());
+            }
             assert_eq!(app.frame, 0);
         });
         let row = cx
@@ -2007,7 +2183,7 @@ fn slab_keyboard_partial_fields_and_narrow_layout(cx: &mut TestAppContext) {
     let waiters = cx.debug_bounds("slab-wait-queue").unwrap();
     assert!(history.top() >= summary.bottom());
     assert!(waiters.top() >= history.bottom() || waiters.left() >= history.right());
-    assert!(cx.debug_bounds("slab-usage-plot").unwrap().size.height >= px(180.));
+    assert!(cx.debug_bounds("slab-usage-plot").unwrap().size.height >= px(80.));
     assert!(cx.debug_bounds("slab-wait-queue-empty").is_some());
     assert!(cx.debug_bounds("slab-absent").is_none());
     cx.simulate_keystrokes("escape");
@@ -2111,7 +2287,7 @@ fn semaphore_area_demo_keeps_summary_wait_queue_and_responsive_layout(cx: &mut T
     let waiters = cx.debug_bounds("semaphore-wait-queue").unwrap();
     assert!(history.top() >= summary.bottom());
     assert!(waiters.top() >= history.bottom() || waiters.left() >= history.right());
-    assert!(cx.debug_bounds("semaphore-count-plot").unwrap().size.height >= px(300.));
+    assert!(cx.debug_bounds("semaphore-count-plot").unwrap().size.height >= px(80.));
     cx.update(|window, cx| {
         app.update(cx, |app, cx| {
             for _ in 0..5 {

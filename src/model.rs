@@ -355,6 +355,11 @@ pub fn chart_series(
     }
 }
 
+/// Percentage history for the heap selected in the overview.
+pub fn heap_usage_series(frames: &[Frame], current: usize, key: Option<&HeapKey>) -> ChartSeries {
+    chart_series(frames, current, |frame| key?.in_frame(frame)?.percent())
+}
+
 pub fn parse(input: &str) -> Result<Vec<Frame>, String> {
     #[derive(Deserialize)]
     #[serde(untagged)]
@@ -431,6 +436,41 @@ mod tests {
         assert_eq!(f.stacks(), None);
         assert_eq!(percent(None), "—");
         assert_eq!(percentage(0, 0), None);
+    }
+
+    #[test]
+    fn heap_usage_series_keeps_reused_addresses_and_duplicate_names_separate() {
+        let frames = parse(include_str!("../test-data/heaps.json")).unwrap();
+        let original = HeapKey {
+            address: 4096,
+            name: "packet_heap".into(),
+        };
+        let series = heap_usage_series(&frames, 5, Some(&original));
+        assert_eq!(
+            series.points.iter().map(|p| p.value).collect::<Vec<_>>(),
+            vec![Some(25.), Some(100.), Some(50.), None, Some(0.), Some(50.)],
+        );
+        assert_eq!(series.points[3].x, 5.);
+        let replacement = HeapKey {
+            address: 4096,
+            name: "replacement_heap".into(),
+        };
+        let series = heap_usage_series(&frames, 3, Some(&replacement));
+        assert!(series.points[..3].iter().all(|p| p.value.is_none()));
+        assert_eq!(series.points[3].value, Some(100. * 900. / 1024.));
+        let duplicate = HeapKey {
+            address: 8192,
+            name: "packet_heap".into(),
+        };
+        let series = heap_usage_series(&frames, 5, Some(&duplicate));
+        assert_eq!(series.points[0].value, Some(25.));
+        assert!(series.points[1..].iter().all(|p| p.value.is_none()));
+        assert!(
+            heap_usage_series(&frames, 5, None)
+                .points
+                .iter()
+                .all(|p| p.value.is_none())
+        );
     }
 
     #[test]

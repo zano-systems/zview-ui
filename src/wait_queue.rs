@@ -1,6 +1,6 @@
 //! One visual vocabulary for thread wait queues in overviews and details.
 use crate::{MUTED, PURPLE};
-use gpui_kit::component::{Icon, tag::Tag};
+use gpui_kit::component::{Icon, scroll::ScrollableElement, tag::Tag};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
@@ -32,13 +32,17 @@ pub(super) fn threads(
                 let selector = format!("{prefix}-waiter-{index}");
                 div()
                     .debug_selector(move || selector.clone())
+                    .min_w_0()
                     .max_w_full()
+                    .when(matches!(layout, Layout::Vertical), |el| el.w_full())
                     .child(
                         Tag::custom(
                             rgb(0x352b4d).into(),
                             rgb(PURPLE).into(),
                             rgb(0x55416f).into(),
                         )
+                        .min_w_0()
+                        .max_w_full()
                         .rounded_full()
                         .child(
                             div()
@@ -49,9 +53,17 @@ pub(super) fn threads(
                                 .child(
                                     div()
                                         .debug_selector(|| "wait-thread-icon".into())
+                                        .flex_shrink_0()
                                         .child(Icon::new(assets::IconName::Spool).size(px(14.))),
                                 )
-                                .child(div().min_w_0().child(name.clone())),
+                                .child(
+                                    crate::layout::note(
+                                        format!("{prefix}-waiter-label-{index}"),
+                                        name.clone(),
+                                    )
+                                    .flex_1()
+                                    .text_sm(),
+                                ),
                         ),
                     )
                     .into_any_element()
@@ -70,7 +82,8 @@ pub(super) fn threads(
             })
             .collect(),
     };
-    div()
+    let scroll_id = SharedString::from(format!("{prefix}-wait-queue-scroll"));
+    let content = div()
         .debug_selector(move || format!("{prefix}-waiter-tags"))
         .flex()
         .flex_col()
@@ -80,7 +93,22 @@ pub(super) fn threads(
         .when(matches!(layout, Layout::Wrap), |el| {
             el.flex_row().flex_wrap()
         })
-        .children(entries)
+        .children(entries);
+    match layout {
+        Layout::Wrap => content.into_any_element(),
+        Layout::Vertical => div()
+            .id(scroll_id.clone())
+            .debug_selector({
+                let scroll_id = scroll_id.clone();
+                move || scroll_id.to_string()
+            })
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scrollbar()
+            .id(scroll_id)
+            .child(content)
+            .into_any_element(),
+    }
 }
 
 #[cfg(test)]

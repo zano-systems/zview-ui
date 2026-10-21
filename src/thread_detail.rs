@@ -22,7 +22,7 @@ impl ThreadsApp {
         div()
             .id("thread-detail")
             .debug_selector(|| "thread-detail".into())
-            .flex().flex_col().flex_grow(1.).flex_shrink_0().gap_4()
+            .flex().flex_col().flex_1().min_h_0().gap_3()
             .child(
                 div().flex().flex_shrink_0().items_center().justify_between()
                     .child(div().text_lg().font_semibold().child("Thread details"))
@@ -31,13 +31,13 @@ impl ThreadsApp {
                             .on_click(cx.listener(|this, _, window, cx| this.show_overview(window, cx))))),
             )
             .when(thread.is_none(), |el| el.child(
-                div().flex_shrink_0().p_4().rounded_lg().border_1().border_color(rgb(BORDER)).child(
+                div().flex_shrink_0().p_2().rounded_lg().border_1().border_color(rgb(BORDER)).child(crate::layout::note("thread-absent",
                     "This thread is not present in the selected frame. Move to another frame or return to Threads. Values are not carried forward from an earlier frame.",
-                ),
+                )),
             ))
             .child(
                 div().debug_selector(|| "thread-summary".into()).flex().flex_wrap().flex_shrink_0()
-                    .gap_4().p_4().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
+                    .gap_3().p_3().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
                     .child(field("Thread", key.name.clone()).min_w(px(140.)))
                     .child(field("CPU %", percent(runtime.and_then(|r| r.cpu_normalized))))
                     .child(field("Load %", percent(runtime.and_then(|r| r.cpu))))
@@ -62,7 +62,7 @@ impl ThreadsApp {
                         .debug_selector(|| "thread-entry-source".into()).min_w(px(320.)).flex_grow(3.).flex_basis(px(320.))),
             )
             .child(
-                div().flex().flex_grow(1.).flex_shrink_0().gap_4().flex_wrap()
+                div().flex().flex_1().min_h_0().gap_3()
                     .child(Self::chart_card(
                         "thread-cpu", "CPU %",
                         runtime.and_then(|r| r.cpu_normalized),
@@ -93,9 +93,9 @@ fn field(title: &'static str, value: String) -> impl IntoElement + Styled {
         .flex_1()
         .flex()
         .flex_col()
-        .gap_2()
+        .gap_1()
         .child(label(title))
-        .child(div().text_sm().child(value))
+        .child(crate::layout::note(title, value).text_sm())
 }
 
 fn info_card(title: &'static str, value: String) -> impl IntoElement + Styled + InteractiveElement {
@@ -108,9 +108,9 @@ fn info_card(title: &'static str, value: String) -> impl IntoElement + Styled + 
         .bg(rgb(CARD))
         .flex()
         .flex_col()
-        .gap_2()
+        .gap_1()
         .child(label(title))
-        .child(div().text_sm().child(value))
+        .child(crate::layout::note(title, value).text_sm())
 }
 
 fn unknown() -> String {
