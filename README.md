@@ -1,6 +1,6 @@
 # ZView UI — experimental desktop
 
-Version: **0.1.0** (experimental). Contributions follow Semantic Versioning and
+Version: **0.2.0** (experimental). Contributions follow Semantic Versioning and
 Conventional Commits; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
 Standalone experimental desktop frontend for
@@ -96,11 +96,34 @@ visible and display an error. Input is limited to 16 MiB.
   waiting or suspended cannot be inferred from this activity flag.
 - Buttons, inputs, focus rings, floating search and dropdowns use the shared
   purple theme palette, including hover/pressed and selected-list colors.
-- Horizontally scrollable table and wrapping summary cards for smaller windows.
-- Overview and thread-detail charts grow vertically to use spare window height. Their 240px
-  minimum is retained when cards wrap or a longer table requires scrolling.
+- Independently scrollable Threads and Kernel objects rows, with pinned column
+  headers (and the kernel aggregate row). Wide tables scroll horizontally without
+  moving the page. Up/Down keeps the selected thread in view.
+- Height-bounded screens keep navigation, session controls, summary cards and
+  charts visible at the supported minimum window size of **1000 × 680**.
+  Charts resize with the window instead of enforcing fixed minimum heights.
+  Overview charts and the bordered thread table split available height equally,
+  excluding the table heading and activity legend; detail charts fill the
+  remaining space. Long wait queues and pending-work lists scroll inside panels.
+- Overview and Thread detail chart cards use compact, aligned headings without
+  repeated time footers; time remains on the chart axes and session controls.
+- Supporting descriptions and long values are truncated rather than expanding
+  the page; hover to read their complete text. Summary cards can still wrap.
 - Missing measurements display `—`, not zero. Idle is excluded from both the
   table and thread aggregates. Stack watermark is **not total device RAM**.
+
+## Breadcrumb navigation
+
+Breadcrumbs open the destination they name, independently of the previous list:
+
+- **Threads** opens the Threads overview.
+- **Kernel objects** opens the all-types overview, clearing type and search filters.
+- An object type such as **Mutex** opens that type's list with search cleared.
+- The current object name is a label, not a navigation link.
+
+Breadcrumb navigation retains session time, playback, and the overview heap
+selection. **Back** and **Escape** instead return with the previous list's search
+and type filter intact.
 
 ## Phase 2 — Thread detail
 
@@ -195,8 +218,9 @@ cargo run -- test-data/kernel-objects.json
 ## Shared wait queue presentation
 
 All wait queues use purple rounded thread tags with a **Spool** icon, distinct
-from the blue briefcase tags for pending work. Detail panels show one thread per
-row; overview cells wrap tags. Both preserve the complete captured queue order.
+from the yellow briefcase tags for pending work. Detail panels show one thread per
+row in an independently scrollable area; overview cells wrap tags inside the
+scrollable table. Both preserve the complete captured queue order.
 
 - Known empty: the queue area is blank, with no placeholder text or zero prefix.
 - Unknown: **Wait queue unavailable**, never treated as an empty queue.
@@ -237,8 +261,8 @@ available count relative to a finite limit.
   A single snapshot remains available in the summary and on hover, without
   an invented area duration.
 - The full **Wait queue** matches the mutex layout: unnumbered, purple-themed
-  tags in queue order, one thread per row beside the chart, stacking below it
-  at narrow widths. Summary fields and the
+  tags in queue order, one thread per row in a scrollable panel beside the chart.
+  Summary fields and the
   finite-limit capacity bar remain above the chart.
 - These are sampled counts, not individual give/take events. Operations between
   snapshots can cancel out and leave no trace, as in the TUI.
@@ -246,9 +270,9 @@ available count relative to a finite limit.
   GPUI Kit warning notification and unavailable current values rather than stale
   readings. The in-app notification remains until dismissed, the object returns,
   or you leave its detail screen. Redraws do not create duplicate notifications.
-- **Escape**, **Back to Kernel objects**, and the **Kernel objects** breadcrumb
-  return to the overview with its search, type filter, time, and heap selection
-  intact. The sidebar keeps Kernel objects active while inspecting a semaphore.
+- **Escape** and **Back to Kernel objects** return to the overview with its
+  search, type filter, time, and heap selection intact. Breadcrumbs use the
+  destinations described above. The sidebar keeps Kernel objects active while inspecting a semaphore.
   Returning focuses the search input.
 
 The JSON currently supplies the object address, not the TUI's ELF-resolved
@@ -275,9 +299,10 @@ Click a message queue row, or focus it with **Tab** and press **Enter**.
 The screen shows name, address, current depth, capacity, message size in bytes,
 the complete waiter list, and a depth history chart.
 
-- The chart uses the queue's capacity as its count-axis maximum, not a percentage
-  axis. A missing or zero capacity uses the largest observed depth through the
-  selected frame (minimum 1), with an explicit scale label and no ratio bar.
+- The count axis includes the largest reported capacity and depth through the
+  selected frame (minimum 1), never future readings. A smaller current capacity
+  does not clip earlier counts; the scale label distinguishes the history range
+  from current capacity. Missing or zero capacity still has no ratio bar.
 - Full queues are red; otherwise nonempty wait queues are amber. Zephyr uses one
   shared wait queue: full queues imply blocked senders, empty queues imply blocked
   receivers. Intermediate or unavailable state does not imply a direction.
@@ -316,7 +341,7 @@ Click a mutex row, or focus it with **Tab** and press **Enter**. Details show
 name, address, lock state, recursive lock depth, owner name/address, and the
 complete **Wait queue** as unnumbered tags in a vertical list, one thread per row,
 retaining queue order. The queue sits to the right of the history chart and
-stacks below it when the window is too narrow. A zero owner address means **Free**; unknown
+scrolls independently without moving the chart. A zero owner address means **Free**; unknown
 ownership is not treated as free. A nonzero owner with an unavailable wait
 queue says **Locked · Contention unknown**.
 
@@ -353,9 +378,9 @@ names distinct.
 **Previous/Next** retains the inspected identity. An absent mutex shows a
 GPUI Kit warning notification, not an inline alert, and no stale current values.
 It remains until dismissed, recovery, or navigation away, without repeating
-on redraw. **Escape**, Back, and the Kernel
-objects breadcrumb preserve search, type filter, selected frame and heap on
-return. Missing measurements display `—`; an empty known queue is blank.
+on redraw. **Escape** and Back preserve search, type filter, selected frame and
+heap on return. Breadcrumbs open their named lists, as described above.
+Missing measurements display `—`; an empty known queue is blank.
 Dumps do not provide an ELF declaration site for mutexes.
 
 For a synthetic thirteen-frame demo covering recursive locking, contention,
@@ -380,9 +405,10 @@ Click a memory slab row, or focus it with **Tab** and press **Enter**. The
 screen shows name, address, used and total blocks, block size, total capacity
 in bytes, target-reported peak usage, the full wait queue, and block-count history.
 
-- The chart uses `0–num_blocks`, not a percentage axis. Missing or zero capacity
-  uses the largest observed usage through the selected frame (minimum 1), with
-  an explicit scale label. The capacity bar always remains visible: zero usage
+- The count axis includes the largest reported block capacity and usage through
+  the selected frame (minimum 1), never future readings. The scale label shows
+  a smaller current capacity separately, so past counts remain accurate.
+  The capacity bar always remains visible: zero usage
   shows an empty track and `0.0%`; a missing ratio, zero capacity or absent slab
   shows an empty track labelled **Usage ratio unavailable**, not a zero reading.
 - Exhausted slabs are red; otherwise slabs with waiting threads are amber.
@@ -394,8 +420,8 @@ in bytes, target-reported peak usage, the full wait queue, and block-count histo
   states, not individual allocation/free events.
 - **Previous/Next** updates the shared session frame. An absent slab shows an
   explicit message instead of carrying current values forward.
-- **Escape**, Back, and the Kernel objects breadcrumb preserve search, type
-  filter, time, and heap selection on return. The sidebar remains in Kernel
+- **Escape** and Back preserve search, type filter, time, and heap selection on
+  return. Breadcrumbs open their named lists. The sidebar remains in Kernel
   objects. The current dump has no ELF declaration-site metadata for slabs.
 
 The two-frame `test-data/kernel-objects-minimal.json` fixture includes a slab
@@ -611,33 +637,79 @@ It includes the original QEMU recording, matching ELF, and desktop JSON.
 
 Click a work queue row, or focus its row with **Tab** and press **Enter**.
 The detail shows identity, worker thread, decoded flags and raw hexadecimal
-flags, captured pending items in queue order, and the complete drain-waiter
-list. Unknown measurements show `—`. Known-empty pending lists are blank;
+flags, current sampled state, observed busy percentage, captured pending items
+in queue order, and the complete drain-waiter list. Unknown measurements show `—`.
+Known-empty pending lists contain no item tags;
 drain waiters use the shared wait queue presentation above.
 Busy does not imply a nonempty backlog: the running handler has already left
 the pending list.
 
-The pending and drain-waiter panels split the chart height equally when beside
-it. Each list scrolls independently. Pending work uses blue briefcase tags;
-waiting threads use purple spool tags, retaining queue order. At narrow widths,
-the panels move below the chart.
+The lower row keeps the page's outer margins and the gaps between panels.
+Of the remaining panel width, **60%** goes to Pending backlog, **20%** to Items
+queue, and **20%** to Drain waiters.
+All three panels have the same height, including at the minimum window size.
+Each list scrolls independently; long names truncate with their full text on hover.
+The **Items queue** shows a generic **Work item** while the queue's Busy flag
+is set. That item is not counted in the pending backlog, and no handler name is
+guessed from pending items. Its color follows queue pressure: yellow when the
+pending list is complete and empty, red when work is waiting, and neutral when
+backlog data is unknown. Pending work uses red briefcase tags; waiting threads
+use purple spool tags, retaining queue order. Idle has no colored state fill.
+Delayed and cancelled item states are not supplied by this dump format.
 
-The pending-backlog chart uses actual timestamps and an observed count scale
+The **Activity history** strip shares the heap map's icon-only Zoom in, Zoom out
+and Fit controls, pointer-anchored wheel zoom, drag/horizontal/Shift+scroll pan,
+and Left/Right/Home/End keyboard navigation. Its coordinates are actual recorded
+timestamps (or frame order for untimed documents), not converted heap offsets.
+Each work queue retains its own view independently of the backlog chart.
+Opening a new document resets it. The fit view uses the recording's full time
+axis; unobserved/future space stays blank.
+
+- Timeline blocks have no inline labels; colors indicate queue pressure.
+  The current-state summary and hover/click inspection retain the actual worker state.
+  Red means **work waiting**, whether the worker is processing or not; yellow
+  means **processing without backlog**. Idle/inactive queues without backlog
+  are unfilled. Unknown pressure uses neutral stripes.
+  A positive truncated pending list confirms waiting work and is red; an empty
+  truncated list does not prove an empty queue and remains neutral.
+  These are fixed levels, not a gradient normalized to the recording's maximum.
+  **Not started** and **Not processing** remain explicit.
+  **Idle** requires a started queue, a clear Busy flag and a complete, empty
+  pending list. **Not processing** has a clear Busy flag but unknown/incomplete
+  backlog data; pending items with a clear Busy flag instead mean **Ready**.
+- Adjacent equal states and pressure levels may share a visual block; hover and click inspection
+  retain the original source timestamp. A selected past reading stays available
+  during forward playback, but is cleared when stepping before that reading.
+  An isolated or terminal sample is a marker, not an invented state duration.
+- **Observed busy · last 10s** is the time-weighted share of known started
+  intervals whose left sample reports Busy. The window ends at the selected
+  captured timestamp and is shorter near the beginning of a recording.
+  Unknown/missing and not-started intervals are excluded from the denominator.
+  Coverage and median capture interval are shown alongside the estimate.
+  One snapshot or untimed data has no busy percentage. This is a sampled
+  estimate, not CPU utilization or exact execution time; short jobs between
+  polls can be missed. Zooming the strip does not change this explicit window.
+  Its yellow meter measures activity, not backlog severity.
+
+The neutral purple pending-backlog chart uses actual timestamps and an observed count scale
 (minimum 1), not percentages or capacity. Matching uses address and name.
 It uses the shared mouse-wheel zoom and **Fit history** controls.
 Missing objects, missing lists, and truncated lists break exact-count history;
+their observed intervals are shown as light-grey **Unknown count** background
+bands spanning the numeric count plot. They are not plotted as zero
+or interpolated counts, and future/unobserved space remains blank.
 truncated current lists show `N+` and a partial-list notice instead of claiming
 an exact total. The backlog is a sample-and-hold step line: each captured count
 holds until the next timestamp, including up to the start of a missing reading.
-Tooltips use that held source reading, not a nearer future sample. There are no
-persistent dots or invented duration after the selected frame. These are
+Tooltips use that held source reading, not a nearer future sample. Neither
+persistent nor hover dots are drawn. No duration is invented after the selected frame. These are
 captured counts, not execution events.
 Future readings are neither drawn nor used for scaling.
 
 Previous/Next uses the shared frame. An absent queue produces the same warning
-notification as mutex/semaphore details and clears current values. Escape,
-Back, and the Kernel objects breadcrumb retain search, type, time, and heap
-selection. Declaration-site metadata is not available in the dump.
+notification as mutex/semaphore details and clears current values. Escape and
+Back retain search, type, time, and heap selection. Breadcrumbs open their named
+lists. Declaration-site metadata is not available in the dump.
 
 Synthetic demo (not a target capture):
 
@@ -648,6 +720,18 @@ cargo run -- test-data/workqs.json
 Open `system_workq` under Kernel objects → Work queue. The fixture includes
 duplicate names at different addresses, busy with an empty backlog, draining,
 plugged, truncated/unknown lists and address reuse with a changed name.
+
+For a synthetic activity demonstration with Processing, Idle, Ready, Unknown,
+Not started, and Not processing states:
+
+```sh
+cargo run -- test-data/workq-activity.json
+```
+
+Open `activity_demo` and press Play. These are illustrative snapshots, not a
+target recording. In the preserved real benchmark, `bench_workq` reports Busy at
+every captured sample, including samples with no pending work; `k_sys_work_q`
+reports Idle throughout. Neither observation is a CPU-utilization measurement.
 
 ## Phase 9 — Heap detail and fragmentation map
 
@@ -661,13 +745,33 @@ chunk fields still open with those fields explicitly unavailable.
   steps. Its byte axis includes the largest reported capacity through the
   selected frame, not future capacity. Missing heaps break the line. Identity
   is matched by address and name, never by row position or name alone.
-- The fragmentation map displays captured chunks proportionally over eight
-  byte spans, read left-to-right then top-to-bottom, without gaps between rows.
-  Purple means allocated; free memory is unfilled. Thin outlines mark chunk
-  segments, keeping an entirely free map visible. Chunks crossing row boundaries retain the same identity.
-  Hover a segment for the chunk number, full byte size, allocation state,
-  and relative byte-offset range. Very small chunks may require a wider window
-  to target with the pointer; pixel aggregation/map zoom is not implemented.
+- A separate **red Fragmentation ratio** plot beside allocated bytes uses a
+  fixed 0–100% scale, exact percentage tooltips, and independent zoom. It uses
+  the same map accounting as the current fragmentation value:
+  `100 × (1 − largest_free / free_map_bytes)`, or zero when no map bytes are
+  free. Missing, empty, invalid, or uncaptured maps create gaps rather than zero
+  readings. Both histories follow the shared session time without page scrolling.
+- The full-width fragmentation map is a **single proportional strip**, ordered
+  by captured byte offset from left to right. Purple means allocated; free
+  memory is unfilled. It never wraps blocks into additional rows.
+- Icon-only **Zoom in**, **Zoom out**, and **Fit entire heap** controls change the
+  byte viewport, not the measurements. Vertical scrolling zooms around the
+  pointer. Drag, horizontal scroll, or Shift+scroll pans. Focus the strip and
+  use Left/Right or Home/End to pan with the keyboard. Zoom is bounded by the
+  complete map and a one-byte visible range; panning cannot leave the map.
+- Hover any visible block for its number, full size, state and relative offset
+  range. Click to retain that inspection beneath the map. Selection clears
+  when the captured frame or map changes, so it does not imply allocation
+  identity across snapshots. Each heap has independent spatial zoom/pan state,
+  retained on navigation and clamped to the current map span. Opening a new
+  document resets these views.
+- Labels such as `16B` and `4KiB` appear only when their entire text fits inside
+  the **visible portion** of a block. Even a partly visible block reports its
+  full original size, including allocator overhead. Labels do not widen blocks.
+  At overview scale, subpixel blocks are coverage-weighted into pixel bins;
+  zooming resolves their exact boundaries, and hit testing uses original chunks.
+- Both history charts fill the area below the map, with the independently
+  scrollable wait queue on the right. All remain visible without page scrolling.
 - The current dump contains ordered chunk sizes, **not absolute chunk
   addresses**. Offsets begin at the first captured chunk; they are not offsets
   from the `k_heap` object. The UI does not invent memory addresses.
@@ -678,8 +782,9 @@ chunk fields still open with those fields explicitly unavailable.
 - Uncaptured maps, empty maps, and invalid maps (zero-size or overflowing sizes)
   have explicit messages, not an all-free visualization. An absent heap clears
   current values and shows the shared warning notification.
-- Escape, Back, and the Kernel objects breadcrumb preserve frame, filters,
-  search and overview heap selection. Narrow layouts wrap and scroll.
+- Escape and Back preserve frame, filters, search and overview heap selection.
+  Breadcrumbs open their named lists. Narrow layouts resize the chart and map;
+  scrolling stays inside the wait queue.
 
 Small synthetic edge-case fixture (not the visual benchmark or a target acquisition):
 
@@ -725,8 +830,8 @@ cargo test \
   recorded_heap_maps_render_and_play_from_the_full_benchmark -- --ignored
 ```
 
-It checks the actual file, proportional segment geometry across eight
-representative frames, waiting-thread visibility, chunk tooltips, chart zoom,
+It checks the actual file, the full-width strip across eight representative
+frames, waiting-thread visibility, chunk tooltips, chart zoom,
 recorded-speed playback and narrow layout. It is ignored in the default suite
 because it requires the local export; missing or incorrect data fails explicitly.
 Manual native visual review remains a separate check.
@@ -763,8 +868,10 @@ horizontal scrolling. Compare state/waiter labels against a real target dump
 when one with those object groups is available.
 
 For semaphore details, click the semaphore row and check the count, finite-limit
-bar, history, and waiter list at both frames. Return using Back, breadcrumb, and
-Escape; confirm search/type filters and frame are retained. Also focus the row
+bar, history, and waiter list at both frames. Return using Back and Escape;
+confirm search/type filters and frame are retained. Check that **Kernel objects**
+in the breadcrumb clears both filters, while the type breadcrumb selects that
+type and clears search; both retain the frame. Also focus the row
 using Tab and open it with Enter. Resize to the minimum width and check the
 summary, chart, and wait queue do not overlap. Headless tests cover these paths,
 missing objects/fields, duplicate names, and unlimited/uninitialized limits.

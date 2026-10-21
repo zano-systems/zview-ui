@@ -1,8 +1,10 @@
 mod app_assets;
 mod chart_zoom;
 mod heap_detail;
+mod heap_map;
 mod kernel_model;
 mod kernel_objects;
+mod layout;
 mod model;
 mod msgq_detail;
 mod mutex_detail;
@@ -15,8 +17,11 @@ mod tests;
 mod thread_detail;
 mod time_series_chart;
 mod wait_queue;
+mod workq_activity;
 mod workq_detail;
+mod zoom_strip;
 
+use gpui_kit::component::InteractiveElementExt;
 use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, IconName, IndexPath, Sizable, StyledExt, Theme, ThemeMode,
     WindowExt,
@@ -75,6 +80,35 @@ enum Screen {
     Heap(model::HeapKey),
 }
 
+impl Screen {
+    fn object_kind(&self) -> Option<kernel_model::Kind> {
+        use kernel_model::Kind;
+        match self {
+            Self::Semaphore(_) => Some(Kind::Semaphore),
+            Self::MessageQueue(_) => Some(Kind::MessageQueue),
+            Self::MemorySlab(_) => Some(Kind::MemorySlab),
+            Self::Mutex(_) => Some(Kind::Mutex),
+            Self::WorkQueue(_) => Some(Kind::WorkQueue),
+            Self::Heap(_) => Some(Kind::Heap),
+            Self::Overview | Self::Thread(_) | Self::KernelObjects => None,
+        }
+    }
+
+    fn name(&self) -> Option<&str> {
+        // Retain the route identity even when the object is absent in a frame.
+        match self {
+            Self::Thread(key) => Some(&key.name),
+            Self::Semaphore(key) => Some(&key.name),
+            Self::MessageQueue(key) => Some(&key.name),
+            Self::MemorySlab(key) => Some(&key.name),
+            Self::Mutex(key) => Some(&key.name),
+            Self::WorkQueue(key) => Some(&key.name),
+            Self::Heap(key) => Some(&key.name),
+            Self::Overview | Self::KernelObjects => None,
+        }
+    }
+}
+
 struct MissingObjectNotification;
 
 struct ThreadsApp {
@@ -94,6 +128,12 @@ struct ThreadsApp {
     missing_notice: Option<Screen>,
     table_focus: FocusHandle,
     detail_focus: FocusHandle,
+    thread_rows_scroll: ScrollHandle,
+    thread_columns_scroll: ScrollHandle,
+    object_rows_scroll: ScrollHandle,
+    object_columns_scroll: ScrollHandle,
+    heap_map_states: Entity<heap_map::MapStates>,
+    workq_activity_states: Entity<workq_activity::States>,
     heap: Entity<SelectState<SearchableVec<String>>>,
     _heap_subscription: Subscription,
     object_search: Entity<InputState>,
@@ -153,6 +193,12 @@ impl ThreadsApp {
             missing_notice: None,
             table_focus: cx.focus_handle(),
             detail_focus: cx.focus_handle(),
+            thread_rows_scroll: ScrollHandle::new(),
+            thread_columns_scroll: ScrollHandle::new(),
+            object_rows_scroll: ScrollHandle::new(),
+            object_columns_scroll: ScrollHandle::new(),
+            heap_map_states: cx.new(|_| heap_map::MapStates::default()),
+            workq_activity_states: cx.new(|_| workq_activity::States::default()),
             heap,
             _heap_subscription: subscription,
             object_search,
@@ -205,6 +251,11 @@ impl ThreadsApp {
         self.error = None;
         self.selected = None;
         self.screen = Screen::Overview;
+        self.heap_map_states.update(cx, |states, _| states.clear());
+        self.workq_activity_states
+            .update(cx, |states, _| states.clear());
+        self.thread_rows_scroll.set_offset(point(px(0.), px(0.)));
+        self.object_rows_scroll.set_offset(point(px(0.), px(0.)));
         self.sync_heaps(window, cx);
     }
 
@@ -400,8 +451,11 @@ impl ThreadsApp {
         };
         // Sub-nanosecond float rounding must not create a ready zero-duration
         // timer that repeatedly polls the same timestamp without yielding.
+        // Bound long waits before conversion: valid finite source timestamps can
+        // exceed Duration or platform timer limits. Each wakeup recomputes the
+        // deadline against the source-time anchor, without inventing frames.
         Some(std::time::Duration::from_secs_f64(
-            (next - seconds).max(1e-9),
+            (next - seconds).clamp(1e-9, 1.),
         ))
     }
 
@@ -470,6 +524,7 @@ impl ThreadsApp {
                 (None, _) => 0,
             };
             self.selected = Some(rows[index].address);
+            self.thread_rows_scroll.scroll_to_item(index);
         }
         cx.notify();
     }
@@ -485,6 +540,99 @@ impl ThreadsApp {
         self.object_search
             .update(cx, |input, cx| input.focus(window, cx));
         cx.notify();
+    }
+
+    fn follow_object_breadcrumb(
+        &mut self,
+        kind: Option<kernel_model::Kind>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Breadcrumbs name destinations; unlike Back, they do not restore filters.
+        self.object_search
+            .update(cx, |input, cx| input.set_value("", window, cx));
+        self.show_kernel_objects(kind, window, cx);
+    }
+
+    fn breadcrumbs(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_detail = self.screen.name().is_some();
+        let in_threads = matches!(self.screen, Screen::Overview | Screen::Thread(_));
+        let kind = if self.screen == Screen::KernelObjects {
+            self.object_kind
+        } else {
+            self.screen.object_kind()
+        };
+        let section_link = is_detail || kind.is_some();
+        div()
+            .debug_selector(|| "breadcrumbs".into())
+            .flex()
+            .flex_wrap()
+            .min_w_0()
+            .items_center()
+            .gap_2()
+            .text_sm()
+            .text_color(rgb(MUTED))
+            .child("Monitor")
+            .child("›")
+            .when(!section_link, |el| {
+                el.child(if in_threads {
+                    "Threads"
+                } else {
+                    "Kernel objects"
+                })
+            })
+            .when(section_link, |el| {
+                let id = if in_threads {
+                    "threads-breadcrumb"
+                } else {
+                    "objects-breadcrumb"
+                };
+                el.child(
+                    div().debug_selector(move || id.into()).child(
+                        Button::new(id)
+                            .text()
+                            .small()
+                            .label(if in_threads {
+                                "Threads"
+                            } else {
+                                "Kernel objects"
+                            })
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                if in_threads {
+                                    this.show_overview(window, cx);
+                                } else {
+                                    this.follow_object_breadcrumb(None, window, cx);
+                                }
+                            })),
+                    ),
+                )
+            })
+            .when_some(kind, |el, kind| {
+                el.child("›").child(
+                    div()
+                        .debug_selector(|| "object-type-breadcrumb".into())
+                        .when(!is_detail, |el| el.child(kind.label()))
+                        .when(is_detail, |el| {
+                            el.child(
+                                Button::new("object-type-breadcrumb")
+                                    .text()
+                                    .small()
+                                    .label(kind.label())
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        this.follow_object_breadcrumb(Some(kind), window, cx);
+                                    })),
+                            )
+                        }),
+                )
+            })
+            .when_some(self.screen.name(), |el, name| {
+                el.child("›").child(
+                    div()
+                        .debug_selector(|| "breadcrumb-current".into())
+                        .text_color(rgb(0xe6dfef))
+                        .child(name.to_string()),
+                )
+            })
     }
 
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -562,7 +710,7 @@ impl ThreadsApp {
                                 "Stack watermark is not total device RAM. Options are raw target flags. ",
                                 "Expand Kernel objects in the sidebar to filter by type; search filters by name/address. ",
                                 "Click a kernel-object row, or focus it with Tab and press Enter, for details. ",
-                                "Escape, Back, or the Kernel objects breadcrumb returns with filters intact. ",
+                                "Escape and Back return with filters intact. Breadcrumbs open their named list with search cleared; Kernel objects shows all types. ",
                                 "Previous/Next changes the shared snapshot. Histories show sampled counts/depth, not individual operations. ",
                                 "State bars show counts, occupancy, or lock/busy state—not CPU usage. ",
                                 "Unknown wait queues are labelled unavailable; known empty queues are blank. ",
@@ -586,51 +734,58 @@ impl ThreadsApp {
         series: model::ChartSeries,
         selector: Option<AnyElement>,
     ) -> impl IntoElement + Styled {
-        let caption = series.caption.clone();
         div()
             .debug_selector(move || id.into())
             .flex_1()
-            .min_w(px(320.))
-            .flex_shrink_0()
-            .min_h(px(240.))
-            .h(px(240.))
-            .p_4()
+            .min_w_0()
+            .min_h_0()
+            .p_3()
             .rounded_lg()
             .border_1()
             .border_color(rgb(BORDER))
             .bg(rgb(CARD))
             .flex()
             .flex_col()
-            .gap_2()
+            .gap_1()
             .child(
                 div()
+                    .debug_selector(move || format!("{id}-header"))
                     .flex()
-                    .items_center()
+                    .min_h(px(28.))
+                    .flex_shrink_0()
+                    .items_start()
                     .justify_between()
                     .gap_2()
-                    .child(div().text_xs().text_color(rgb(MUTED)).child(title))
+                    .child(
+                        div()
+                            .debug_selector(move || format!("{id}-title"))
+                            .flex_shrink_0()
+                            .text_xs()
+                            .text_color(rgb(MUTED))
+                            .child(title),
+                    )
                     .when_some(selector, |el, selector| el.child(selector)),
             )
             .child(
                 div()
-                    .text_3xl()
+                    .debug_selector(move || format!("{id}-value"))
+                    .text_2xl()
                     .font_semibold()
                     .text_color(rgb(color))
                     .child(percent(value)),
             )
-            .child(div().text_xs().text_color(rgb(MUTED)).child(detail))
+            .child(layout::note(format!("{id}-description"), detail))
             .child(
                 div()
                     .debug_selector(move || format!("{id}-plot"))
                     .flex_1()
-                    .min_h(px(70.))
+                    .min_h_0()
                     .child(time_series_chart::TimeSeriesChart::new(
                         id,
                         series,
                         rgb(color).into(),
                     )),
             )
-            .child(div().text_xs().text_color(rgb(MUTED)).child(caption))
     }
 
     fn table(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -651,141 +806,199 @@ impl ThreadsApp {
             )
             .flex()
             .flex_col()
-            .flex_shrink_0()
-            .gap_3()
+            .flex_1()
+            .min_h_0()
             .child(
                 div()
-                    .flex()
-                    .justify_between()
-                    .child(format!("All threads · {}", rows.len()))
+                    .id("thread-columns")
+                    .debug_selector(|| "thread-table-viewport".into())
+                    .relative()
+                    .w_full()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_x_scroll()
+                    .lock_scroll_axis()
+                    .track_scroll(&self.thread_columns_scroll)
+                    .horizontal_scrollbar(&self.thread_columns_scroll)
                     .child(
                         div()
-                            .text_xs()
-                            .text_color(rgb(MUTED))
-                            .child("Click to inspect · ↑/↓ select · Enter to inspect"),
-                    ),
-            )
-            .child(
-                div().w_full().overflow_x_scrollbar().child(
-                    div()
-                        .min_w(px(900.))
-                        .rounded_lg()
-                        .border_1()
-                        .border_color(rgb(BORDER))
-                        .overflow_hidden()
-                        .child(
-                            div()
-                                .flex()
-                                .p_3()
-                                .bg(rgb(0x2a263e))
-                                .text_xs()
-                                .text_color(rgb(MUTED))
-                                .child(div().flex_1().min_w(px(180.)).child("THREAD"))
-                                .child(div().w(px(95.)).child("CPU %"))
-                                .child(div().w(px(95.)).child("LOAD %"))
-                                .child(div().w(px(250.)).child("STACK WATERMARK"))
-                                .child(div().w(px(160.)).child("WATERMARK / SIZE")),
-                        )
-                        .children(rows.iter().enumerate().map(|(i, thread)| {
-                            let address = thread.address;
-                            let runtime = thread.runtime.as_ref();
-                            let active = runtime.is_some_and(|r| r.active);
-                            let watermark = runtime.and_then(|r| r.stack_watermark_percent);
-                            let color = if watermark.is_some_and(|v| v >= 70.) {
-                                0xddb66b
-                            } else {
-                                GREEN
-                            };
-                            div()
-                                .id(("thread", i))
-                                .debug_selector(move || format!("thread-row-{address}"))
-                                .flex()
-                                .items_center()
-                                .p_3()
-                                .text_sm()
-                                .bg(rgb(if self.selected == Some(address) {
-                                    0x3b3053
-                                } else if i % 2 == 0 {
-                                    0x242137
-                                } else {
-                                    BG
-                                }))
-                                .cursor_pointer()
-                                .hover(|el| el.bg(rgb(0x353049)))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.selected = Some(address);
-                                    this.open_selected(&OpenThread, window, cx);
-                                }))
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w(px(180.))
-                                        .flex()
-                                        .gap_3()
-                                        .items_center()
-                                        .child(div().id(("thread-activity", i))
-                                            .debug_selector(move || format!("thread-activity-{}-{address}", if active { "active" } else { "inactive" }))
-                                            .tooltip({
-                                                let description = thread.activity_description();
-                                                move |window, cx| Tooltip::new(description).build(window, cx)
-                                            })
-                                            .size_4().flex_shrink_0()
-                                            .child(Icon::new(if active { assets::IconName::Activity } else { assets::IconName::CircleDashed })
-                                                .size_4().text_color(rgb(if active { GREEN } else { 0x686078 }))))
-                                        .child(thread.name.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .w(px(95.))
-                                        .child(number(runtime.and_then(|r| r.cpu_normalized))),
-                                )
-                                .child(div().w(px(95.)).child(number(runtime.and_then(|r| r.cpu))))
-                                .child(
-                                    div()
-                                        .w(px(250.))
-                                        .flex()
-                                        .items_center()
-                                        .gap_3()
-                                        .child(div().w(px(160.)).when_some(watermark, |el, v| {
-                                            el.child(
-                                                Progress::new(("stack", i))
-                                                    .value(v as f32)
-                                                    .color(rgb(color))
-                                                    .small()
-                                                    .accessibility_label(format!(
-                                                        "{} stack watermark",
-                                                        thread.name
+                            .w_full()
+                            .h_full()
+                            .flex()
+                            .flex_col()
+                            .flex_shrink_0()
+                            .min_w(px(900.))
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(rgb(BORDER))
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .debug_selector(|| "thread-table-header".into())
+                                    .flex()
+                                    .flex_shrink_0()
+                                    .p_3()
+                                    .bg(rgb(0x2a263e))
+                                    .text_xs()
+                                    .text_color(rgb(MUTED))
+                                    .child(div().flex_1().min_w(px(180.)).child("THREAD"))
+                                    .child(div().w(px(95.)).child("CPU %"))
+                                    .child(div().w(px(95.)).child("LOAD %"))
+                                    .child(div().w(px(250.)).child("STACK WATERMARK"))
+                                    .child(div().w(px(160.)).child("WATERMARK / SIZE")),
+                            )
+                            .child(
+                                div()
+                                    .id("thread-rows")
+                                    .debug_selector(|| "thread-rows".into())
+                                    .relative()
+                                    .flex()
+                                    .flex_col()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .overflow_y_scroll()
+                                    .lock_scroll_axis()
+                                    .track_scroll(&self.thread_rows_scroll)
+                                    .vertical_scrollbar(&self.thread_rows_scroll)
+                                    .children(rows.iter().enumerate().map(|(i, thread)| {
+                                        let address = thread.address;
+                                        let runtime = thread.runtime.as_ref();
+                                        let active = runtime.is_some_and(|r| r.active);
+                                        let watermark =
+                                            runtime.and_then(|r| r.stack_watermark_percent);
+                                        let color = if watermark.is_some_and(|v| v >= 70.) {
+                                            0xddb66b
+                                        } else {
+                                            GREEN
+                                        };
+                                        div()
+                                            .id(("thread", i))
+                                            .debug_selector(move || format!("thread-row-{address}"))
+                                            .flex()
+                                            .flex_shrink_0()
+                                            .items_center()
+                                            .p_3()
+                                            .text_sm()
+                                            .bg(rgb(if self.selected == Some(address) {
+                                                0x3b3053
+                                            } else if i % 2 == 0 {
+                                                0x242137
+                                            } else {
+                                                BG
+                                            }))
+                                            .cursor_pointer()
+                                            .hover(|el| el.bg(rgb(0x353049)))
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                this.selected = Some(address);
+                                                this.open_selected(&OpenThread, window, cx);
+                                            }))
+                                            .child(
+                                                div()
+                                                    .flex_1()
+                                                    .min_w(px(180.))
+                                                    .flex()
+                                                    .gap_3()
+                                                    .items_center()
+                                                    .child(
+                                                        div()
+                                                            .id(("thread-activity", i))
+                                                            .debug_selector(move || {
+                                                                format!(
+                                                                    "thread-activity-{}-{address}",
+                                                                    if active {
+                                                                        "active"
+                                                                    } else {
+                                                                        "inactive"
+                                                                    }
+                                                                )
+                                                            })
+                                                            .tooltip({
+                                                                let description =
+                                                                    thread.activity_description();
+                                                                move |window, cx| {
+                                                                    Tooltip::new(description)
+                                                                        .build(window, cx)
+                                                                }
+                                                            })
+                                                            .size_4()
+                                                            .flex_shrink_0()
+                                                            .child(
+                                                                Icon::new(if active {
+                                                                    assets::IconName::Activity
+                                                                } else {
+                                                                    assets::IconName::CircleDashed
+                                                                })
+                                                                .size_4()
+                                                                .text_color(rgb(if active {
+                                                                    GREEN
+                                                                } else {
+                                                                    0x686078
+                                                                })),
+                                                            ),
+                                                    )
+                                                    .child(thread.name.clone()),
+                                            )
+                                            .child(div().w(px(95.)).child(number(
+                                                runtime.and_then(|r| r.cpu_normalized),
+                                            )))
+                                            .child(
+                                                div()
+                                                    .w(px(95.))
+                                                    .child(number(runtime.and_then(|r| r.cpu))),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w(px(250.))
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_3()
+                                                    .child(div().w(px(160.)).when_some(
+                                                        watermark,
+                                                        |el, v| {
+                                                            el.child(
+                                                                Progress::new(("stack", i))
+                                                                    .value(v as f32)
+                                                                    .color(rgb(color))
+                                                                    .small()
+                                                                    .accessibility_label(format!(
+                                                                        "{} stack watermark",
+                                                                        thread.name
+                                                                    )),
+                                                            )
+                                                        },
+                                                    ))
+                                                    .child(
+                                                        div()
+                                                            .text_xs()
+                                                            .text_color(rgb(color))
+                                                            .child(percent(watermark)),
+                                                    ),
+                                            )
+                                            .child(
+                                                div()
+                                                    .w(px(160.))
+                                                    .text_xs()
+                                                    .text_color(rgb(MUTED))
+                                                    .child(format!(
+                                                        "{} / {} B",
+                                                        bytes(
+                                                            runtime.and_then(|r| r.stack_watermark)
+                                                        ),
+                                                        bytes(thread.stack_size)
                                                     )),
                                             )
-                                        }))
-                                        .child(
+                                    }))
+                                    .when(rows.is_empty(), |el| {
+                                        el.child(
                                             div()
-                                                .text_xs()
-                                                .text_color(rgb(color))
-                                                .child(percent(watermark)),
-                                        ),
-                                )
-                                .child(div().w(px(160.)).text_xs().text_color(rgb(MUTED)).child(
-                                    format!(
-                                        "{} / {} B",
-                                        bytes(runtime.and_then(|r| r.stack_watermark)),
-                                        bytes(thread.stack_size)
-                                    ),
-                                ))
-                        }))
-                        .when(rows.is_empty(), |el| {
-                            el.child(
-                                div()
-                                    .p_8()
-                                    .text_color(rgb(MUTED))
-                                    .child("No non-idle threads in this snapshot."),
-                            )
-                        }),
-                ),
+                                                .p_8()
+                                                .text_color(rgb(MUTED))
+                                                .child("No non-idle threads in this snapshot."),
+                                        )
+                                    }),
+                            ),
+                    ),
             )
-            .child(div().debug_selector(|| "thread-activity-legend".into())
-                .text_xs().text_color(rgb(MUTED))
-                .child("Green activity icon: CPU activity since previous sample · Gray dashed circle: no observed activity or unavailable · Not current scheduler state"))
     }
 }
 
@@ -825,7 +1038,10 @@ impl Render for ThreadsApp {
         let frame = &self.frames[self.frame];
         let selected = self.heap.read(cx).selected_value();
         let heap = frame.heaps.iter().find(|h| Some(&h.label()) == selected);
-        let heap_address = heap.map(|h| h.address);
+        let heap_key = heap.map(|h| model::HeapKey {
+            address: h.address,
+            name: h.name.clone(),
+        });
         let stack = frame.stacks();
         // Reserve the widest status for this document, independent of the
         // current digits or Playing/Paused state. The hidden template uses the
@@ -870,20 +1086,28 @@ impl Render for ThreadsApp {
                         Screen::Heap(_) => "heap-content",
                     })
                     .flex_1()
+                    .h_full()
                     .min_w_0()
+                    .min_h_0()
                     .flex()
                     .flex_col()
-                    .p_6()
-                    .gap_5()
-                    .overflow_y_scrollbar()
+                    .p_4()
+                    .gap_3()
+                    .overflow_hidden()
                     .child(
                         div()
+                            .debug_selector(|| "app-toolbar".into())
                             .flex()
+                            .flex_shrink_0()
+                            .flex_wrap()
+                            .gap_3()
                             .items_center()
                             .justify_between()
                             .child(
                                 div()
                                     .flex()
+                                    .flex_1()
+                                    .min_w_0()
                                     .gap_4()
                                     .items_center()
                                     .child(
@@ -894,66 +1118,12 @@ impl Render for ThreadsApp {
                                                 cx.notify();
                                             })),
                                     )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .items_center()
-                                            .gap_2()
-                                            .text_sm()
-                                            .text_color(rgb(MUTED))
-                                            .child("Monitor  ›")
-                                            .when(self.screen == Screen::Overview, |el| {
-                                                el.child("Threads")
-                                            })
-                                            .when(self.screen == Screen::KernelObjects, |el| {
-                                                el.child("Kernel objects")
-                                            })
-                                            .when(matches!(self.screen, Screen::Semaphore(_) | Screen::MessageQueue(_) | Screen::MemorySlab(_) | Screen::Mutex(_) | Screen::WorkQueue(_) | Screen::Heap(_)), |el| {
-                                                el.child(div().debug_selector(|| "objects-breadcrumb".into())
-                                                    .child(Button::new("objects-breadcrumb").text().small().label("Kernel objects")
-                                                        .on_click(cx.listener(|this, _, window, cx| {
-                                                            this.show_kernel_objects(this.object_kind, window, cx);
-                                                        }))))
-                                            })
-                                            .when(matches!(self.screen, Screen::Thread(_)), |el| {
-                                                el.child(
-                                                    div()
-                                                        .debug_selector(|| {
-                                                            "threads-breadcrumb".into()
-                                                        })
-                                                        .child(
-                                                            Button::new("threads-breadcrumb")
-                                                                .text()
-                                                                .small()
-                                                                .label("Threads")
-                                                                .on_click(cx.listener(
-                                                                    |this, _, window, cx| {
-                                                                        this.show_overview(
-                                                                            window, cx,
-                                                                        )
-                                                                    },
-                                                                )),
-                                                        ),
-                                                )
-                                            })
-                                            .when_some(
-                                                match &self.screen {
-                                                    Screen::Thread(key) => Some(key.name.clone()),
-                                                    Screen::Semaphore(key) => Some(key.name.clone()),
-                                                    Screen::MessageQueue(key) => Some(key.name.clone()),
-                                                    Screen::MemorySlab(key) => Some(key.name.clone()),
-                                                    Screen::Mutex(key) => Some(key.name.clone()),
-                                                    Screen::WorkQueue(key) => Some(key.name.clone()),
-                                                    Screen::Heap(key) => Some(key.name.clone()),
-                                                    _ => None,
-                                                },
-                                                |el, name| el.child(format!(" › {name}")),
-                                            ),
-                                    ),
+                                    .child(self.breadcrumbs(cx)),
                             )
                             .child(
                                 div()
                                     .flex()
+                                    .flex_shrink_0()
                                     .flex_wrap()
                                     .gap_2()
                                     .child(
@@ -984,9 +1154,10 @@ impl Render for ThreadsApp {
                         el.child(
                             div()
                                 .flex()
+                                .flex_shrink_0()
                                 .flex_col()
                                 .gap_1()
-                                .child(div().text_3xl().font_semibold().child("Threads"))
+                                .child(div().text_2xl().font_semibold().child("Threads"))
                                 .child(
                                     div()
                                         .text_sm()
@@ -996,12 +1167,13 @@ impl Render for ThreadsApp {
                         )
                     })
                     .when_some(self.error.clone(), |el, error| {
-                        el.child(div().p_3().rounded_md().bg(rgb(0x492c3c)).child(error))
+                        el.child(div().p_3().flex_shrink_0().rounded_md().bg(rgb(0x492c3c))
+                            .child(layout::note("session-error", error)))
                     })
                     .when(self.loading.is_some(), |el| {
                         el.child(
                             div().debug_selector(|| "session-loading".into())
-                                .flex().items_center().gap_3().p_3().rounded_md().bg(rgb(CARD))
+                                .flex().flex_shrink_0().items_center().gap_3().p_3().rounded_md().bg(rgb(CARD))
                                 .child("Loading session… Current session stays available.")
                                 .child(div().debug_selector(|| "cancel-load".into()).child(Button::new("cancel-load").label("Cancel")
                                     .on_click(cx.listener(|this, _, _, cx| {
@@ -1055,23 +1227,23 @@ impl Render for ThreadsApp {
                             Screen::WorkQueue(key) => Some(key),
                             _ => None,
                         },
-                        |el, key| el.child(self.workq_detail(key, cx)),
+                        |el, key| el.child(self.workq_detail(key, window, cx)),
                     )
                     .when_some(
                         match &self.screen {
                             Screen::Heap(key) => Some(key),
                             _ => None,
                         },
-                        |el, key| el.child(self.heap_detail(key, cx)),
+                        |el, key| el.child(self.heap_detail(key, window, cx)),
                     )
                     .when(self.screen == Screen::Overview, |el| {
                         el.child(
                             div()
+                                .debug_selector(|| "overview-charts".into())
                                 .flex()
-                                .flex_grow(1.)
-                                .flex_shrink_0()
-                                .gap_4()
-                                .flex_wrap()
+                                .flex_1()
+                                .min_h_0()
+                                .gap_3()
                                 .child(
                                     Self::chart_card(
                                         "cpu",
@@ -1115,17 +1287,14 @@ impl Render for ThreadsApp {
                                         })
                                         .unwrap_or_else(|| "No heaps available".into()),
                                         BLUE,
-                                        model::chart_series(&self.frames, self.frame, |f| {
-                                            f.heaps
-                                                .iter()
-                                                .find(|h| Some(h.address) == heap_address)
-                                                .and_then(|h| h.percent())
-                                        }).with_playhead(self.playback_time(cx)),
+                                        model::heap_usage_series(&self.frames, self.frame, heap_key.as_ref())
+                                            .with_playhead(self.playback_time(cx)),
                                         Some(
-                                            div().debug_selector(|| "heap-selector".into()).child(
+                                            div().debug_selector(|| "heap-selector".into())
+                                                .flex_1().min_w_0().max_w(px(140.)).child(
                                             Select::new(&self.heap)
                                                 .small()
-                                                .w(px(190.))
+                                                .w_full()
                                                 .disabled(frame.heaps.is_empty())
                                                 .placeholder("No heaps available")
                                                 .accessibility_label("Heap"))
@@ -1135,20 +1304,27 @@ impl Render for ThreadsApp {
                                     .h_auto(),
                                 ),
                         )
+                        .child(div().debug_selector(|| "thread-table-heading".into())
+                            .flex().flex_shrink_0().justify_between()
+                            .child(format!("All threads · {}", frame.visible_threads().len()))
+                            .child(div().text_xs().text_color(rgb(MUTED))
+                                .child("Click to inspect · ↑/↓ select · Enter to inspect")))
                         .child(self.table(cx))
+                        .child(layout::note("thread-activity-legend",
+                            "Green activity icon: CPU activity since previous sample · Gray dashed circle: no observed activity or unavailable · Not current scheduler state"))
                     })
                     .child(
                         div()
                             .debug_selector(|| "session-footer".into())
                             .flex()
-                            .flex_wrap()
+                            .min_w_0()
                             .gap_3()
                             .flex_shrink_0()
                             .items_center()
                             .justify_between()
                             .text_xs()
                             .text_color(rgb(MUTED))
-                            .child(
+                            .child(div().flex_1().min_w_0().child(layout::note("session-source",
                                 self.source
                                     .as_ref()
                                     .map(|p| match &self.recording_elf {
@@ -1159,10 +1335,11 @@ impl Render for ThreadsApp {
                                         "Bundled real dump · sys_heap_v4.3 recording, frame 2"
                                             .into()
                                     }),
-                            )
+                            )))
                             .child(
                                 div()
                                     .flex()
+                                    .flex_shrink_0()
                                     .gap_2()
                                     .items_center()
                                     .child(

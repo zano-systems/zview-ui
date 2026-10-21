@@ -3,6 +3,7 @@ use crate::{
     OpenWorkQueue, Screen, ThreadsApp,
     kernel_model::{self, Kind, Row, State, Summary},
 };
+use gpui_kit::component::InteractiveElementExt;
 use gpui_kit::component::{
     StyledExt,
     button::{Button, ButtonVariants},
@@ -30,15 +31,15 @@ impl ThreadsApp {
             .flex()
             .flex_col()
             .flex_1()
-            .flex_shrink_0()
-            .gap_4()
-            .child(div().text_3xl().font_semibold().child("Kernel objects"))
-            .child(div().text_sm().text_color(rgb(MUTED)).child(
+            .min_h_0()
+            .gap_3()
+            .child(div().flex_shrink_0().text_2xl().font_semibold().child("Kernel objects"))
+            .child(crate::layout::note("kernel-description",
                 "Statically declared objects · state and wait queues at the selected frame",
             ))
             .child(
                 div().debug_selector(|| "kernel-table-toolbar".into())
-                    .w_full().min_w_0().flex().items_center().justify_between().flex_wrap().gap_3().text_sm()
+                    .w_full().min_w_0().flex().flex_shrink_0().items_center().justify_between().flex_wrap().gap_3().text_sm()
                     .child(format!("{} of {} objects", visible.len(), rows.len()))
                     .child(
                         div().flex().items_center().flex_wrap().gap_3()
@@ -58,17 +59,22 @@ impl ThreadsApp {
             )
             .child(
                 div().id("kernel-table").debug_selector(|| "kernel-table".into()).w_full().min_w_0()
-                    .overflow_x_scrollbar()
+                    .relative().flex_1().min_h_0().overflow_x_scroll().lock_scroll_axis()
+                    .track_scroll(&self.object_columns_scroll).horizontal_scrollbar(&self.object_columns_scroll)
                     .child(
-                        div().min_w(px(1040.)).rounded_lg().border_1().border_color(rgb(BORDER)).overflow_hidden()
-                            .child(div().flex().p_3().bg(rgb(0x2a263e)).text_xs().text_color(rgb(MUTED))
+                        div().w_full().h_full().min_w(px(1040.)).flex().flex_col().flex_shrink_0()
+                            .rounded_lg().border_1().border_color(rgb(BORDER)).overflow_hidden()
+                            .child(div().debug_selector(|| "kernel-table-header".into()).flex().flex_shrink_0().p_3().bg(rgb(0x2a263e)).text_xs().text_color(rgb(MUTED))
                                 .child(div().w(px(120.)).child("TYPE"))
                                 .child(div().w(px(190.)).child("NAME"))
                                 .child(div().w(px(115.)).child("ADDRESS"))
                                 .child(div().flex_1().min_w(px(330.)).child("STATE / USAGE"))
                                 .child(div().w(px(260.)).child("WAITING THREADS")))
                             .child(summary_row(&Summary::from_rows(&visible), kind))
-                            .children(visible.iter().enumerate().map(|(index, row)| object_row(row, index, cx)))
+                            .child(div().id("object-rows").debug_selector(|| "object-rows".into())
+                                .relative().flex().flex_col().flex_1().min_h_0().overflow_y_scroll().lock_scroll_axis()
+                                .track_scroll(&self.object_rows_scroll).vertical_scrollbar(&self.object_rows_scroll)
+                                .children(visible.iter().enumerate().map(|(index, row)| object_row(row, index, cx)))
                             .when(visible.is_empty(), |el| {
                                 el.child(div().debug_selector(|| "kernel-empty".into()).p_6().text_color(rgb(MUTED))
                                     .child(if rows.is_empty() {
@@ -76,13 +82,13 @@ impl ThreadsApp {
                                     } else {
                                         "No objects match these filters. Clear filters to see all objects."
                                     }))
-                            }),
+                            })),
                     ),
             )
-            .child(div().text_xs().text_color(rgb(MUTED)).child(
+            .child(crate::layout::note("kernel-state-legend",
                 "Unknown wait queues are labelled unavailable · amber waiting / locked · red full, exhausted, contended, draining or plugged",
             ))
-            .child(div().text_xs().text_color(rgb(MUTED)).child(
+            .child(crate::layout::note("kernel-interaction-legend",
                 "Bars represent each type’s state or capacity, not comparable utilization. Click an object, or focus its row with Tab and press Enter to inspect.",
             ))
     }
@@ -92,6 +98,7 @@ fn summary_row(summary: &Summary, kind: Option<Kind>) -> impl IntoElement {
     div()
         .debug_selector(|| "kernel-summary".into())
         .flex()
+        .flex_shrink_0()
         .items_center()
         .p_3()
         .text_sm()
@@ -316,6 +323,7 @@ fn object_row(
             move || selector.clone()
         })
         .flex()
+        .flex_shrink_0()
         .items_center()
         .p_3()
         .text_sm()

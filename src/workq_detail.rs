@@ -3,8 +3,12 @@ use crate::{
     kernel_model::WorkQueueKey,
     model::{self, ChartSeries, Frame},
     time_series_chart::TimeSeriesChart,
+    workq_activity::{self, ACTIVE, Activity, BACKLOG, Pressure},
 };
-use gpui_kit::component::{Icon, StyledExt, button::Button, scroll::ScrollableElement, tag::Tag};
+use gpui_kit::component::{
+    Icon, Sizable, StyledExt, button::Button, progress::Progress, scroll::ScrollableElement,
+    tag::Tag,
+};
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 
@@ -49,9 +53,21 @@ fn field(title: &'static str, value: String) -> impl IntoElement {
         .flex_1()
         .flex()
         .flex_col()
-        .gap_2()
+        .gap_1()
         .child(div().text_xs().text_color(rgb(MUTED)).child(title))
-        .child(div().text_sm().child(value))
+        .child(crate::layout::note(title, value).text_sm())
+}
+
+fn weighted_panel(weight: f32, panel: impl IntoElement) -> impl IntoElement {
+    // Weight unpadded containers so card borders/padding cannot skew the ratio.
+    div()
+        .flex()
+        .flex_col()
+        .flex_grow(weight)
+        .flex_basis(px(0.))
+        .min_w_0()
+        .min_h_0()
+        .child(panel)
 }
 
 fn queue_panel(
@@ -59,14 +75,16 @@ fn queue_panel(
     title: &'static str,
     names: Option<&[String]>,
     truncated: bool,
+    processing: bool,
+    pressure: Pressure,
 ) -> impl IntoElement {
     let is_work = id == "workq-pending";
     // Inline SVG keeps these icons available without expanding the app's asset bundle.
     let icon: &[u8] =
         br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="18" height="14" rx="2"/><path d="M8 7V3h8v4M3 12h18M10 12v3h4v-3"/></svg>"#
     ;
-    let (background, foreground, border) = (0x24364e, crate::BLUE, 0x3b5879);
-    let entries = if !is_work {
+    let (background, foreground, border) = Pressure::Backlog.palette();
+    let mut entries = if !is_work {
         vec![
             crate::wait_queue::threads("workq-drain", names, crate::wait_queue::Layout::Vertical)
                 .into_any_element(),
@@ -79,6 +97,8 @@ fn queue_panel(
                 .map(|(index, name)| {
                     div()
                         .debug_selector(move || format!("{id}-tag-{index}"))
+                        .w_full()
+                        .min_w_0()
                         .max_w_full()
                         .child(
                             Tag::custom(
@@ -86,6 +106,8 @@ fn queue_panel(
                                 rgb(foreground).into(),
                                 rgb(border).into(),
                             )
+                            .min_w_0()
+                            .max_w_full()
                             .rounded_full()
                             .child(
                                 div()
@@ -93,8 +115,19 @@ fn queue_panel(
                                     .items_center()
                                     .gap_2()
                                     .min_w_0()
-                                    .child(Icon::default().data(icon).size(px(14.)))
-                                    .child(div().min_w_0().child(name.clone())),
+                                    .child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .child(Icon::default().data(icon).size(px(14.))),
+                                    )
+                                    .child(
+                                        crate::layout::note(
+                                            format!("workq-item-label-{index}"),
+                                            name.clone(),
+                                        )
+                                        .flex_1()
+                                        .text_sm(),
+                                    ),
                             ),
                         )
                         .into_any_element()
@@ -115,12 +148,63 @@ fn queue_panel(
             ],
         }
     };
+    if is_work {
+        let pending_label = names
+            .map(|n| format!("Pending · {}{}", n.len(), if truncated { "+" } else { "" }))
+            .unwrap_or_else(|| "Pending · —".into());
+        entries.insert(
+            0,
+            div()
+                .text_xs()
+                .when(names.is_some_and(|n| !n.is_empty()), |el| {
+                    el.text_color(rgb(BACKLOG))
+                })
+                .child(pending_label)
+                .into_any_element(),
+        );
+        if processing {
+            let (background, foreground, border) = pressure.palette();
+            entries.insert(
+                0,
+                div()
+                    .debug_selector(|| "workq-processing-item".into())
+                    .child(
+                        Tag::custom(
+                            rgb(background).into(),
+                            rgb(foreground).into(),
+                            rgb(border).into(),
+                        )
+                        .rounded_full()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(Icon::default().data(icon).size(px(14.)))
+                                .child(
+                                    crate::layout::note("workq-processing-label", "Work item")
+                                        .text_sm(),
+                                ),
+                        ),
+                    )
+                    .into_any_element(),
+            );
+            entries.insert(
+                0,
+                div()
+                    .text_xs()
+                    .text_color(rgb(foreground))
+                    .child("Processing · 1")
+                    .into_any_element(),
+            );
+        }
+    }
     div()
         .debug_selector(move || id.into())
         .flex_1()
-        .min_h(px(130.))
+        .min_h_0()
         .min_w_0()
-        .p_4()
+        .p_3()
         .rounded_lg()
         .border_1()
         .border_color(rgb(BORDER))
@@ -128,13 +212,29 @@ fn queue_panel(
         .flex()
         .flex_col()
         .gap_3()
-        .child(div().text_sm().font_semibold().child(title))
         .child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(div().text_sm().font_semibold().child(title))
+                .when(!is_work, |el| {
+                    el.child(
+                        div().text_xs().text_color(rgb(MUTED)).child(
+                            names
+                                .map(|n| n.len().to_string())
+                                .unwrap_or_else(|| "—".into()),
+                        ),
+                    )
+                }),
+        )
+        .child(if is_work {
             div()
                 .id(id)
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scrollbar()
+                .id(id)
                 .child(
                     div()
                         .flex()
@@ -142,8 +242,17 @@ fn queue_panel(
                         .items_start()
                         .gap_2()
                         .children(entries),
-                ),
-        )
+                )
+                .into_any_element()
+        } else {
+            div()
+                .flex()
+                .flex_col()
+                .flex_1()
+                .min_h_0()
+                .children(entries)
+                .into_any_element()
+        })
         .when(truncated, |el| {
             el.child(
                 div()
@@ -158,45 +267,68 @@ impl ThreadsApp {
     pub(super) fn workq_detail(
         &self,
         key: &WorkQueueKey,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let queue = key.in_frame(&self.frames[self.frame]);
         let pending = queue.and_then(|queue| queue.pending.as_deref());
         let truncated = queue.is_some_and(|queue| queue.pending_truncated);
         let waiters = queue.and_then(|queue| queue.object.waiters.as_deref());
+        let state = Activity::from_queue(queue);
+        let pressure = Pressure::from_queue(queue);
+        let busy = workq_activity::observed_busy(&self.frames, self.frame, key);
+        let busy_percent = busy.percent();
         let (series, maximum) = backlog_history(&self.frames, self.frame, key);
         let series = series.with_playhead(self.playback_time(cx));
-        let caption = series.caption.clone();
         div().id("workq-detail").debug_selector(|| "workq-detail".into())
-            .flex().flex_col().flex_grow(1.).flex_shrink_0().gap_4()
-            .child(div().flex().items_center().justify_between().flex_wrap().gap_3()
+            .flex().flex_col().flex_1().min_h_0().gap_2()
+            .child(div().flex().flex_shrink_0().items_center().justify_between().flex_wrap().gap_3()
                 .child(div().text_lg().font_semibold().child("Work queue details"))
                 .child(div().debug_selector(|| "back-to-objects".into()).child(
                     Button::new("back-to-objects").label("Back to Kernel objects")
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.show_kernel_objects(this.object_kind, window, cx);
                         })))))
-            .child(div().debug_selector(|| "workq-summary".into()).flex().flex_wrap()
-                .gap_4().p_4().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
+            .child(div().debug_selector(|| "workq-summary".into()).flex().flex_wrap().flex_shrink_0()
+                .gap_3().p_3().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
                 .child(field("Name", key.name.clone()))
                 .child(field("Address", format!("0x{:08x}", key.address)))
                 .child(field("Worker thread", queue.and_then(|q| q.thread_name.clone()).unwrap_or_else(|| "—".into())))
                 .child(field("Flags", flags_label(queue.and_then(|q| q.flags))))
-                .child(field("Pending items", pending.map(|p| format!("{}{}", p.len(), if truncated { "+" } else { "" })).unwrap_or_else(|| "—".into())))
-                .child(field("Drain waiters", waiters.map(|w| w.len().to_string()).unwrap_or_else(|| "—".into()))))
-            .child(div().flex().flex_grow(1.).flex_shrink_0().flex_wrap().gap_4()
-                .child(div().debug_selector(|| "workq-history".into()).flex_1().min_w(px(320.)).min_h(px(280.))
-                    .p_4().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD)).flex().flex_col().gap_3()
+                .child(div().w_full().min_w_0().flex().gap_3().border_t_1().border_color(rgb(BORDER)).pt_2()
+                    .child(div().debug_selector(||"workq-current-state".into()).flex_1().min_w_0().flex().flex_col().gap_1()
+                        .child(div().text_xs().text_color(rgb(MUTED)).child("Current state"))
+                        .child(div().debug_selector(move||format!("workq-pressure-{}",pressure.key()))
+                            .when_some(pressure.color(),|el,c|el.text_color(rgb(c)))
+                            .child(div().debug_selector(move||format!("workq-state-{}",state.label())).text_lg().font_semibold().child(state.label())))
+                        .child(crate::layout::note("workq-state-note",format!("{} · not CPU usage",pressure.label()))))
+                    .child(div().debug_selector(||"workq-observed-busy".into()).flex_1().min_w_0().flex().flex_col().gap_1()
+                        .child(div().text_xs().text_color(rgb(MUTED)).child("Observed busy · last 10s"))
+                        .child(div().flex().items_center().gap_2()
+                            .child(div().debug_selector(||"workq-busy-value".into()).text_lg().font_semibold()
+                                .when(busy_percent.is_some_and(|p|p>0.),|el|el.text_color(rgb(ACTIVE)))
+                                .child(model::percent(busy_percent)))
+                            .when_some(busy_percent,|el,p|el.child(div().flex_1().child(Progress::new("workq-busy-meter").small().value(p as f32).color(rgb(ACTIVE))))))
+                        .child(crate::layout::note("workq-busy-coverage",busy.description())))
+                    .child(div().flex_1().min_w_0().flex().flex_col().gap_1()
+                        .child(div().text_xs().text_color(rgb(MUTED)).child("Pending"))
+                        .child(div().text_lg().font_semibold()
+                            .when(pending.is_some_and(|p|!p.is_empty()),|el|el.text_color(rgb(BACKLOG)))
+                            .child(pending.map(|p|format!("{}{}",p.len(),if truncated {"+"}else{""})).unwrap_or_else(||"—".into())))
+                        .child(crate::layout::note("workq-pending-note","Excludes the executing work item")))))
+            .child(workq_activity::view(&self.workq_activity_states,key,workq_activity::History::new(&self.frames,self.frame,key),window,cx))
+            .child(div().debug_selector(||"workq-lower-panels".into()).flex().flex_1().min_h_0().gap_3()
+                .child(weighted_panel(3.,div().debug_selector(|| "workq-history".into()).flex_1().min_w_0().min_h_0()
+                    .p_3().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD)).flex().flex_col().gap_2()
                     .child(div().text_sm().font_semibold().child("Pending backlog"))
-                    .child(div().text_xs().text_color(rgb(MUTED)).child(format!("0–{maximum:.0} pending items · observed scale, not capacity")))
-                    .child(div().flex_1().min_h(px(180.)).child(
-                        TimeSeriesChart::count("workq-backlog", series, rgb(PURPLE).into(), maximum)))
-                    .child(div().text_xs().text_color(rgb(MUTED)).child(caption)))
-                .child(div().debug_selector(|| "workq-side-panels".into()).w(px(280.)).min_w(px(240.)).min_h(px(280.)).flex().flex_col().gap_4()
-                    .child(queue_panel("workq-pending", "Pending items", pending, truncated))
-                    .child(queue_panel("workq-drain-waiters", "Drain waiters", waiters, false))))
-            .child(div().text_xs().text_color(rgb(MUTED)).child(
-                "Sample-and-hold backlog, not execution events. The running handler has left the pending list. Missing and truncated readings break the exact-count history. Declaration location is not available in the dump."))
+                    .child(crate::layout::note("workq-backlog-scale",format!("0–{maximum:.0} items · grey bands: Unknown count")))
+                    .child(div().flex_1().min_h_0().child(
+                        TimeSeriesChart::count("workq-backlog", series, rgb(PURPLE).into(), maximum)
+                            .without_dots().with_shaded_unknown_counts()))))
+                .child(weighted_panel(1.,queue_panel("workq-pending", "Items queue", pending, truncated,state==Activity::Processing,pressure)))
+                .child(weighted_panel(1.,queue_panel("workq-drain-waiters", "Drain waiters", waiters, false,false,pressure))))
+            .child(crate::layout::note("workq-note",
+                "Sampled state, not execution events or CPU utilization. Short jobs between polls can be missed. Busy estimates exclude unknown/not-started intervals. Cancelled and delayed item states are not captured."))
     }
 }
 

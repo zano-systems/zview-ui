@@ -1,0 +1,17 @@
+[
+  {"elapsed_seconds":0,"threads":[],"workqs":[{"name":"activity_demo","address":28672,"thread_name":"demo_worker","flags":1,"pending":[],"waiters":[]}]},
+  {"elapsed_seconds":3,"threads":[],"workqs":[{"name":"activity_demo","address":28672,"thread_name":"demo_worker","flags":3,"pending":["flush_logs","send_packet"],"waiters":[]}]},
+  {"elapsed_seconds":3.5,"threads":[],"workqs":[{"name":"activity_demo","address":28672,"thread_name":"demo_worker","flags":3,"pending":[],"waiters":[]}]},
+  {"elapsed_seconds":4,"threads":[],"workqs":[{"name":"activity_demo","address":28672,"thread_name":"demo_worker","flags":1,"pending":["send_packet"],"waiters":[]}]},
+  {"elapsed_seconds":4.5,"threads":[],"workqs":[{"name":"activity_demo","address":28672,"thread_name":"demo_worker","flags":3,"pending":[],"waiters":[]}]},
+  {"elapsed_seconds":6,"threads":[],"workqs":[{"name":"activity_demo","address":28672,"thread_name":"demo_worker","flags":1,"pending":[],"waiters":[]}]},
+  {"elapsed_seconds":7,"threads":[],"workqs":[{"name":"activity_demo","address":28672,"thread_name":"demo_worker","flags":1,"pending":[],"waiters":[]}]},
+  {"elapsed_seconds":9,"threads":[],"workqs":[{"name":"activity_demo","address":28672,"flags":null,"pending":null,"waiters":null}]},
+  {"elapsed_seconds":10,"threads":[],"workqs":[]},
+  {"elapsed_seconds":11,"threads":[],"workqs":[{"name":"activity_demo","address":28672,"thread_name":"demo_worker","flags":1,"pending":[],"waiters":[]}]},
+  {"elapsed_seconds":12,"threads":[],"workqs":[{"name":"activity_demo","address":28672,"thread_name":"demo_worker","flags":7,"pending":["flush_logs"],"pending_truncated":true,"waiters":["drainer"]}]},
+  {"elapsed_seconds":15,"threads":[],"workqs":[{"name":"activity_demo","address":28672,"flags":0,"pending":[],"waiters":[]}]},
+  {"elapsed_seconds":16,"threads":[],"workqs":[{"name":"activity_demo","address":28672,"thread_name":"demo_worker","flags":1,"pending":null,"waiters":null}]},
+  {"elapsed_seconds":18,"threads":[],"workqs":[{"name":"activity_demo","address":28672,"thread_name":"demo_worker","flags":1,"pending":[],"waiters":[]}]},
+  {"elapsed_seconds":20,"threads":[],"workqs":[{"name":"activity_demo","address":28672,"thread_name":"demo_worker","flags":3,"pending":["flush_logs","send_packet"],"waiters":[]}]}
+]

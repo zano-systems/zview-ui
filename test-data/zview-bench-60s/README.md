@@ -13,8 +13,10 @@ cargo run -- test-data/zview-bench-60s/session.json
 
 Open **Kernel objects → Work queue → bench_workq**. Pending work includes
 `tick_work (work_handler)` and `trail_work (work_handler)`; observed backlog
-varies from 0 to 2 and flags alternate between started and started/busy.
-The system work queue is also present. Drain waiters are empty in this capture;
+varies from 0 to 2. `bench_workq` reports Started/Busy throughout, including
+131 snapshots with no pending items. The system work queue reports Started
+without Busy (Idle) throughout. These are sampled handler states, not CPU
+utilization. Drain waiters are empty in this capture;
 use the synthetic work queue fixture to exercise nonempty drain queues.
 
 ## Contents
