@@ -48,9 +48,64 @@ fn single_line_map_icons_zoom_pan_select_fit_and_preserve_session(cx: &mut TestA
     assert!(allocated.top() >= map.bottom());
     assert!(fragmentation.left() >= allocated.right() && waiters.left() >= fragmentation.right());
     assert!(waiters.bottom() <= footer.top());
+    assert!(cx.debug_bounds("heap-map-minimap").is_none());
 
     click(&mut cx, "heap-map-zoom-in");
     assert!(cx.debug_bounds("heap-map-view-256-768").is_some());
+    let minimap = cx.debug_bounds("heap-map-minimap").unwrap();
+    let heading = cx.debug_bounds("heap-map-heading").unwrap();
+    let strip = cx.debug_bounds("heap-map-strip").unwrap();
+    assert_eq!(minimap.size.width, px(120.));
+    assert_eq!(minimap.size.height, px(10.));
+    assert!(minimap.left() >= heading.right());
+    assert!((minimap.center().y - heading.center().y).abs() <= px(1.));
+    assert!(minimap.bottom() <= strip.top());
+    assert_eq!(
+        cx.debug_bounds("heap-map").unwrap().size.height,
+        map.size.height
+    );
+    assert!(minimap.right() <= px(1000.));
+    // Clicking outside the highlighted window recenters, clamped at the edge.
+    cx.simulate_click(
+        point(minimap.right() - px(2.), minimap.center().y),
+        Modifiers::default(),
+    );
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("heap-map-view-512-1024").is_some());
+    let grab = point(
+        minimap.left() + minimap.size.width * 0.75,
+        minimap.center().y,
+    );
+    cx.simulate_event(gpui::MouseDownEvent {
+        button: MouseButton::Left,
+        position: grab,
+        ..Default::default()
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        cx.debug_bounds("heap-map-view-512-1024").is_some(),
+        "grabbing the window does not jump"
+    );
+    let destination = point(minimap.left() + px(2.), minimap.center().y);
+    cx.simulate_event(gpui::MouseMoveEvent {
+        position: destination,
+        pressed_button: Some(MouseButton::Left),
+        ..Default::default()
+    });
+    cx.simulate_event(gpui::MouseUpEvent {
+        button: MouseButton::Left,
+        position: destination,
+        ..Default::default()
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("heap-map-view-0-512").is_some());
+    assert!(cx.debug_bounds("heap-map-unselected").is_some());
+    cx.simulate_keystrokes("end");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("heap-map-view-512-1024").is_some());
+    click(&mut cx, "heap-map-fit");
+    assert!(cx.debug_bounds("heap-map-minimap").is_none());
+    click(&mut cx, "heap-map-zoom-in");
     let strip = cx.debug_bounds("heap-map-strip").unwrap();
     cx.simulate_event(gpui::MouseMoveEvent {
         position: strip.center(),
@@ -155,6 +210,7 @@ fn single_line_map_icons_zoom_pan_select_fit_and_preserve_session(cx: &mut TestA
     });
     assert!(cx.debug_bounds("heap-map-unavailable").is_some());
     assert!(cx.debug_bounds("heap-map-strip").is_none());
+    assert!(cx.debug_bounds("heap-map-minimap").is_none());
     cx.update(|window, cx| {
         app.update(cx, |app, cx| {
             app.load(

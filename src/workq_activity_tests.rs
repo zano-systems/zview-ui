@@ -57,9 +57,69 @@ fn work_queue_activity_uses_shared_zoom_and_keeps_backlog_and_session_independen
             .height
             >= px(80.)
     );
+    assert!(cx.debug_bounds("workq-activity-minimap").is_none());
     click(&mut cx, "workq-activity-zoom-in");
     assert!(cx.debug_bounds("workq-activity-view-2.500-7.500").is_some());
     assert!(cx.debug_bounds("workq-backlog-unzoomed").is_some());
+    let minimap = cx.debug_bounds("workq-activity-minimap").unwrap();
+    let heading = cx.debug_bounds("workq-activity-heading").unwrap();
+    let strip = cx.debug_bounds("workq-activity-strip").unwrap();
+    assert_eq!(minimap.size.width, px(120.));
+    assert_eq!(minimap.size.height, px(10.));
+    assert!(minimap.left() >= heading.right());
+    assert!((minimap.center().y - heading.center().y).abs() <= px(1.));
+    assert!(minimap.bottom() <= strip.top());
+    assert_eq!(
+        cx.debug_bounds("workq-activity").unwrap().size.height,
+        activity.size.height
+    );
+    assert!(minimap.right() <= px(1000.));
+    cx.simulate_click(
+        point(minimap.right() - px(2.), minimap.center().y),
+        Modifiers::default(),
+    );
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        cx.debug_bounds("workq-activity-view-5.000-10.000")
+            .is_some()
+    );
+    let grab = point(
+        minimap.left() + minimap.size.width * 0.75,
+        minimap.center().y,
+    );
+    let destination = point(minimap.left() + px(2.), minimap.center().y);
+    cx.simulate_event(gpui::MouseDownEvent {
+        button: gpui::MouseButton::Left,
+        position: grab,
+        ..Default::default()
+    });
+    cx.simulate_event(gpui::MouseMoveEvent {
+        position: destination,
+        pressed_button: Some(gpui::MouseButton::Left),
+        ..Default::default()
+    });
+    cx.simulate_event(gpui::MouseUpEvent {
+        button: gpui::MouseButton::Left,
+        position: destination,
+        ..Default::default()
+    });
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("workq-activity-view-0.000-5.000").is_some());
+    assert!(cx.debug_bounds("workq-activity-unselected").is_some());
+    assert!(cx.debug_bounds("workq-backlog-unzoomed").is_some());
+    app.read_with(&cx, |app, _| {
+        assert_eq!(app.frame, 2);
+        assert!(!app.playing);
+    });
+    cx.simulate_keystrokes("end");
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(
+        cx.debug_bounds("workq-activity-view-5.000-10.000")
+            .is_some()
+    );
+    click(&mut cx, "workq-activity-fit");
+    assert!(cx.debug_bounds("workq-activity-minimap").is_none());
+    click(&mut cx, "workq-activity-zoom-in");
     let strip = cx.debug_bounds("workq-activity-strip").unwrap();
     cx.simulate_event(gpui::MouseMoveEvent {
         position: strip.center(),

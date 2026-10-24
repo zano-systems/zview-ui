@@ -18,6 +18,10 @@ pub(super) trait Viewport: Copy + Default {
     fn edge(&mut self, end: bool);
     fn can_zoom_in(&self) -> bool;
     fn can_zoom_out(&self) -> bool;
+    /// Normalized viewport start/end within the full domain.
+    fn overview_range(&self) -> (f64, f64);
+    /// Move the start within the full domain, preserving the zoom span.
+    fn set_overview_start(&mut self, fraction: f64);
 }
 
 #[derive(Default)]
@@ -25,6 +29,8 @@ pub(super) struct Navigation<V: Viewport> {
     pub viewport: V,
     pub bounds: Rc<Cell<Bounds<Pixels>>>,
     drag: Option<(Point<Pixels>, V)>,
+    overview_bounds: Rc<Cell<Bounds<Pixels>>>,
+    overview_grab: Option<f64>,
 }
 
 impl<V: Viewport> Navigation<V> {
@@ -34,9 +40,34 @@ impl<V: Viewport> Navigation<V> {
     }
     pub fn cancel_drag(&mut self) {
         self.drag = None;
+        self.overview_grab = None;
     }
     pub fn begin_drag(&mut self, position: Point<Pixels>) {
+        self.cancel_drag();
         self.drag = Some((position, self.viewport));
+    }
+    fn overview_fraction(&self, position: Point<Pixels>) -> f64 {
+        let bounds = self.overview_bounds.get();
+        f64::from((position.x - bounds.left()) / bounds.size.width.max(px(1.)))
+    }
+    fn begin_overview_drag(&mut self, position: Point<Pixels>) {
+        self.cancel_drag();
+        let fraction = self.overview_fraction(position).clamp(0., 1.);
+        let (start, end) = self.viewport.overview_range();
+        let width = f64::from(self.overview_bounds.get().size.width.as_f32()).max(1.);
+        let (left, right) = overview_pixels((start, end), width);
+        // The minimum-width handle must also be grabbable at extreme zoom.
+        if fraction * width < left || fraction * width > right {
+            self.viewport
+                .set_overview_start(fraction - (end - start) / 2.);
+        }
+        self.overview_grab = Some(fraction - self.viewport.overview_range().0);
+    }
+    fn drag_overview(&mut self, position: Point<Pixels>) {
+        if let Some(grab) = self.overview_grab {
+            self.viewport
+                .set_overview_start(self.overview_fraction(position) - grab);
+        }
     }
     #[cfg(test)]
     pub fn is_dragging(&self) -> bool {
@@ -70,7 +101,7 @@ pub(super) fn controls<S: State>(
     enabled: bool,
     window: &mut Window,
     cx: &mut App,
-) -> impl IntoElement {
+) -> impl IntoElement + use<S> {
     let viewport = state.read(cx).navigation().viewport;
     let view = window.current_view();
     let mut buttons = Vec::new();
@@ -122,6 +153,137 @@ pub(super) fn controls<S: State>(
         );
     }
     div().flex().items_center().gap_2().children(buttons)
+}
+
+/// A full-domain preview supplied by the caller, with shared viewport chrome
+/// and navigation. Its bounds are separate from the detailed strip's bounds.
+pub(super) fn minimap<S: State>(
+    state: &Entity<S>,
+    id: &'static str,
+    name: &'static str,
+    plot: impl IntoElement,
+    window: &mut Window,
+    cx: &App,
+) -> impl IntoElement {
+    let n = state.read(cx).navigation();
+    let range = n.viewport.overview_range();
+    let bounds = n.overview_bounds.clone();
+    let view = window.current_view();
+    div()
+        .id(id)
+        .debug_selector(move || id.into())
+        .relative()
+        .w(px(120.))
+        .h(px(10.))
+        .flex_shrink_0()
+        .min_w_0()
+        .border_1()
+        .border_color(rgb(0x625675))
+        .focusable()
+        .tab_stop(true)
+        .aria_label(format!(
+            "{name} overview. Click or drag to pan; arrow keys, Home and End move the viewport."
+        ))
+        .cursor_pointer()
+        .focus_visible(|s| s.border_color(rgb(PURPLE)))
+        .on_mouse_down(MouseButton::Left, {
+            let state = state.clone();
+            move |event, _, cx| {
+                state.update(cx, |s, _| {
+                    s.navigation_mut().begin_overview_drag(event.position)
+                });
+                cx.notify(view);
+            }
+        })
+        .on_mouse_move({
+            let state = state.clone();
+            move |event, _, cx| {
+                if event.dragging() {
+                    state.update(cx, |s, _| s.navigation_mut().drag_overview(event.position));
+                    cx.notify(view);
+                }
+            }
+        })
+        .on_mouse_up(MouseButton::Left, {
+            let state = state.clone();
+            move |_, _, cx| {
+                state.update(cx, |s, _| s.navigation_mut().overview_grab = None);
+            }
+        })
+        .on_mouse_up_out(MouseButton::Left, {
+            let state = state.clone();
+            move |_, _, cx| {
+                state.update(cx, |s, _| s.navigation_mut().overview_grab = None);
+            }
+        })
+        .on_key_down({
+            let state = state.clone();
+            move |event, _, cx| {
+                let handled = state.update(cx, |s, _| {
+                    navigate_key(&mut s.navigation_mut().viewport, &event.keystroke.key)
+                });
+                if handled {
+                    cx.stop_propagation();
+                    cx.notify(view);
+                }
+            }
+        })
+        .child(plot)
+        .child(
+            div().absolute().inset_0().child(
+                canvas(
+                    move |rect, _, _| bounds.set(rect),
+                    move |rect, _, window, _| {
+                        let (left, right) = overview_pixels(range, rect.size.width.as_f32() as f64);
+                        let left = rect.left() + px(left as f32);
+                        let right = rect.left() + px(right as f32);
+                        // Dim the context, without replacing its original colors.
+                        for (a, b) in [(rect.left(), left), (right, rect.right())] {
+                            window.paint_quad(fill(
+                                Bounds::new(point(a, rect.top()), size(b - a, rect.size.height)),
+                                rgba(0x141120aa),
+                            ));
+                        }
+                        for edge in [
+                            Bounds::new(point(left, rect.top()), size(right - left, px(1.))),
+                            Bounds::new(
+                                point(left, rect.bottom() - px(1.)),
+                                size(right - left, px(1.)),
+                            ),
+                            Bounds::new(point(left, rect.top()), size(px(1.), rect.size.height)),
+                            Bounds::new(
+                                point(right - px(1.), rect.top()),
+                                size(px(1.), rect.size.height),
+                            ),
+                        ] {
+                            window.paint_quad(fill(edge, rgb(0xe6dfef)));
+                        }
+                    },
+                )
+                .size_full(),
+            ),
+        )
+}
+
+/// Keep a subpixel viewport visible, without changing the actual zoom span.
+fn overview_pixels(range: (f64, f64), width: f64) -> (f64, f64) {
+    let width = width.max(0.);
+    let left = range.0.clamp(0., 1.) * width;
+    let right = range.1.clamp(range.0.clamp(0., 1.), 1.) * width;
+    let span = (right - left).max(2.).min(width);
+    let left = ((left + right - span) / 2.).clamp(0., width - span);
+    (left, left + span)
+}
+
+fn navigate_key<V: Viewport>(viewport: &mut V, key: &str) -> bool {
+    match key {
+        "left" => viewport.step(false),
+        "right" => viewport.step(true),
+        "home" => viewport.edge(false),
+        "end" => viewport.edge(true),
+        _ => return false,
+    }
+    true
 }
 
 pub(super) fn surface<S: State>(
@@ -203,24 +365,16 @@ pub(super) fn surface<S: State>(
         .on_mouse_up_out(MouseButton::Left, {
             let state = state.clone();
             move |_, _, cx| {
-                state.update(cx, |s, _| s.navigation_mut().cancel_drag());
+                state.update(cx, |s, _| s.navigation_mut().drag = None);
             }
         })
         .on_key_down({
             let state = state.clone();
             move |event, _, cx| {
-                let key = event.keystroke.key.as_str();
-                if ["left", "right", "home", "end"].contains(&key) {
-                    state.update(cx, |s, _| {
-                        let v = &mut s.navigation_mut().viewport;
-                        match key {
-                            "left" => v.step(false),
-                            "right" => v.step(true),
-                            "home" => v.edge(false),
-                            "end" => v.edge(true),
-                            _ => {}
-                        }
-                    });
+                let handled = state.update(cx, |s, _| {
+                    navigate_key(&mut s.navigation_mut().viewport, &event.keystroke.key)
+                });
+                if handled {
                     cx.stop_propagation();
                     cx.notify(view);
                 }
@@ -237,4 +391,20 @@ pub(super) fn label_origin(bounds: Bounds<Pixels>, width: Pixels) -> Option<Poin
                 (bounds.size.height - px(14.)) / 2.,
             )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::overview_pixels;
+
+    #[test]
+    fn overview_highlight_tracks_the_range_and_keeps_subpixel_windows_visible() {
+        assert_eq!(overview_pixels((0.25, 0.75), 100.), (25., 75.));
+        assert_eq!(overview_pixels((0., 1.), 100.), (0., 100.));
+        assert_eq!(overview_pixels((0., 1e-12), 100.), (0., 2.));
+        assert_eq!(overview_pixels((1. - 1e-12, 1.), 100.), (98., 100.));
+        assert_eq!(overview_pixels((0.5, 0.5), 100.), (49., 51.));
+        assert_eq!(overview_pixels((0.25, 0.75), 0.), (0., 0.));
+        assert_eq!(overview_pixels((0., 1.), 1.), (0., 1.));
+    }
 }

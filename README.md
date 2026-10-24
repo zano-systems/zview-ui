@@ -675,6 +675,13 @@ Each work queue retains its own view independently of the backlog chart.
 Opening a new document resets it. The fit view uses the recording's full time
 axis; unobserved/future space stays blank.
 
+While zoomed in, a compact **minimap** beside the Activity history heading shows
+the full timeline with the visible time window outlined and surrounding context
+dimmed. Click outside the outline to recenter or drag it to pan without changing the zoom,
+selected frame, or backlog chart. The minimap also supports Left/Right/Home/End
+when focused, and disappears on Fit. It uses the same sampled pressure colors
+and leaves future space blank; it does not add inferred activity.
+
 - Timeline blocks have no inline labels; colors indicate queue pressure.
   The current-state summary and hover/click inspection retain the actual worker state.
   Red means **work waiting**, whether the worker is processing or not; yellow
@@ -769,6 +776,12 @@ chunk fields still open with those fields explicitly unavailable.
   pointer. Drag, horizontal scroll, or Shift+scroll pans. Focus the strip and
   use Left/Right or Home/End to pan with the keyboard. Zoom is bounded by the
   complete map and a one-byte visible range; panning cannot leave the map.
+- While zoomed in, a compact **minimap** beside the Fragmentation map heading
+  shows the entire captured heap with the current byte viewport outlined.
+  Click outside the outline to recenter, or drag it to pan at the same zoom level. Focus it
+  for Left/Right/Home/End navigation. Fit hides the minimap; missing/invalid
+  maps do not show one. This shares its navigation and viewport overlay with
+  the work queue activity minimap, while retaining byte-accurate heap data.
 - Hover any visible block for its number, full size, state and relative offset
   range. Click to retain that inspection beneath the map. Selection clears
   when the captured frame or map changes, so it does not imply allocation
