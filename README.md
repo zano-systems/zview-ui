@@ -77,9 +77,19 @@ zview dump -e test-data/tests/fixtures/zephyr.elf \
 cargo run -- snapshot.json
 ```
 
-Alternatively, use **Open dump** in the app. **Reload** rereads that file; it does
-not poll a probe or advance a recording. Invalid files leave the current data
-visible and display an error. Input is limited to 16 MiB.
+Alternatively, open the **Offline ▾** session menu at the top right and choose
+**Open dump…**. **Reload current file** rereads that file; it does not poll a
+probe or advance a recording. Invalid files leave the current data visible and
+display an error. Input is limited to 16 MiB.
+
+The session menu replaces the separate Open dump, Open recording, and Reload
+toolbar buttons on every screen. It identifies the current offline source
+(and the matching ELF for imported recordings), with full paths available on
+hover. Opening and reloading are disabled during import; **Cancel import** is
+available in the menu as well as in the loading banner. The disabled
+**Connect to target…** entry reserves the future connection workflow: there is
+no MCP connection, target polling, or subprocess server launch yet. Offline
+data is never labelled Live, and Disconnect is not offered without a connection.
 
 ## Included
 
