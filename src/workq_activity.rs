@@ -4,12 +4,13 @@ use crate::{
     kernel_model::{WorkQueue, WorkQueueKey},
     layout,
     model::{self, ChartSeries, Frame},
-    zoom_strip::{self, Navigation},
+    zoom_strip::{self, Navigation, Viewport as _},
 };
 use gpui_kit::component::{
     StyledExt,
     plot::{Plot, PlotElement, TooltipState, tooltip::Tooltip},
 };
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use std::{cell::Cell, collections::HashMap, rc::Rc};
 
@@ -310,6 +311,23 @@ impl zoom_strip::Viewport for TimeViewport {
     fn can_zoom_out(&self) -> bool {
         self.span < self.domain.1 - self.domain.0
     }
+    fn overview_range(&self) -> (f64, f64) {
+        let total = self.domain.1 - self.domain.0;
+        if total <= 0. {
+            (0., 1.)
+        } else {
+            (
+                (self.start - self.domain.0) / total,
+                (self.end() - self.domain.0) / total,
+            )
+        }
+    }
+    fn set_overview_start(&mut self, fraction: f64) {
+        if fraction.is_finite() {
+            self.start = (self.domain.0 + fraction.clamp(0., 1.) * (self.domain.1 - self.domain.0))
+                .clamp(self.domain.0, self.domain.1 - self.span);
+        }
+    }
 }
 
 #[derive(Default)]
@@ -347,6 +365,7 @@ struct Strip {
     history: Rc<History>,
     viewport: TimeViewport,
     bounds: Rc<Cell<Bounds<Pixels>>>,
+    overview: bool,
 }
 impl IntoElement for Strip {
     type Element = PlotElement<Self>;
@@ -356,7 +375,14 @@ impl IntoElement for Strip {
 }
 impl Plot for Strip {
     fn id(&self) -> Option<ElementId> {
-        Some("workq-activity-plot".into())
+        Some(
+            if self.overview {
+                "workq-activity-overview-plot"
+            } else {
+                "workq-activity-plot"
+            }
+            .into(),
+        )
     }
     fn prepaint(&mut self, bounds: Bounds<Pixels>, _: &mut Window, _: &mut App) -> Vec<AnyElement> {
         self.bounds.set(bounds);
@@ -423,7 +449,7 @@ impl Plot for Strip {
         bounds: Bounds<Pixels>,
         _: &App,
     ) -> Option<TooltipState> {
-        if bounds.size.width <= px(0.) {
+        if self.overview || bounds.size.width <= px(0.) {
             return None;
         }
         let x = self
@@ -522,14 +548,22 @@ pub(super) fn view(
     div().debug_selector(||"workq-activity".into()).flex().flex_col().flex_shrink_0().min_w_0().gap_1()
         .p_3().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
         .child(div().flex().items_center().justify_between().gap_2()
-            .child(div().text_sm().font_semibold().child("Activity history"))
+            .child(div().flex().items_center().gap_3()
+                .child(div().debug_selector(|| "workq-activity-heading".into())
+                    .text_sm().font_semibold().child("Activity history"))
+                .when(viewport.can_zoom_out(), |el| {
+                    let mut full = viewport;
+                    full.fit();
+                    el.child(zoom_strip::minimap(&state, "workq-activity-minimap", "Work queue activity",
+                        Strip { history:history.clone(), viewport:full, bounds:Rc::default(), overview:true }, window, cx))
+                }))
             .child(div().flex().items_center().gap_2()
                 .child(div().debug_selector(move||format!("workq-activity-view-{:.3}-{:.3}",viewport.start,viewport.end()))
                     .child(layout::note("workq-activity-range",range))).child(controls)))
-        .child(zoom_strip::surface(&state,"workq-activity-strip",Strip{history:history.clone(),viewport,bounds},window))
+        .child(zoom_strip::surface(&state,"workq-activity-strip",Strip{history:history.clone(),viewport,bounds,overview:false},window))
         .child(div().min_w_0().debug_selector(move||selected.map_or_else(||"workq-activity-unselected".into(),|i|format!("workq-activity-selected-{i}")))
             .child(layout::note("workq-activity-inspection",selected.filter(|i|*i<history.readings.len()).map(|i|history.description(i)).unwrap_or_else(||
-                "Red: work waiting · Yellow: processing without backlog · Unfilled: idle/inactive · Striped: pressure unknown · Drag/scroll to pan · Vertical scroll to zoom".into()))))
+                "Red: work waiting · Yellow: processing without backlog · Unfilled: idle/inactive · Striped: pressure unknown · Drag strip or minimap to pan · Vertical scroll to zoom".into()))))
 }
 
 #[cfg(test)]
@@ -677,6 +711,16 @@ mod tests {
         v.sync((1., 6.), false);
         v.zoom(1000., 0.5);
         assert_eq!(v.span, 1.);
+        v.set_overview_start(0.25);
+        assert_eq!((v.start, v.end()), (2.25, 3.25));
+        assert_eq!(v.overview_range(), (0.25, 0.45));
+        v.set_overview_start(2.);
+        assert_eq!((v.start, v.end()), (5., 6.));
+        v.set_overview_start(-2.);
+        assert_eq!((v.start, v.end()), (1., 2.));
+        let before = v;
+        v.set_overview_start(f64::NAN);
+        assert_eq!(v, before);
     }
 
     #[test]

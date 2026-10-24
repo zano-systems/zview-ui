@@ -136,6 +136,22 @@ impl zoom_strip::Viewport for Viewport {
     fn can_zoom_out(&self) -> bool {
         self.span < self.total
     }
+    fn overview_range(&self) -> (f64, f64) {
+        if self.total == 0 {
+            (0., 1.)
+        } else {
+            (
+                self.start as f64 / self.total as f64,
+                self.end() as f64 / self.total as f64,
+            )
+        }
+    }
+    fn set_overview_start(&mut self, fraction: f64) {
+        if fraction.is_finite() {
+            self.start = ((fraction.clamp(0., 1.) * self.total as f64).round() as u64)
+                .min(self.total - self.span);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -331,6 +347,7 @@ struct HeapStrip {
     viewport: Viewport,
     selected: Option<Block>,
     bounds: Rc<Cell<Bounds<Pixels>>>,
+    overview: bool,
 }
 
 impl IntoElement for HeapStrip {
@@ -342,7 +359,14 @@ impl IntoElement for HeapStrip {
 
 impl Plot for HeapStrip {
     fn id(&self) -> Option<ElementId> {
-        Some("heap-map-strip-plot".into())
+        Some(
+            if self.overview {
+                "heap-map-overview-plot"
+            } else {
+                "heap-map-strip-plot"
+            }
+            .into(),
+        )
     }
 
     fn prepaint(&mut self, bounds: Bounds<Pixels>, _: &mut Window, _: &mut App) -> Vec<AnyElement> {
@@ -371,7 +395,7 @@ impl Plot for HeapStrip {
                     a: 1.,
                 };
                 window.paint_quad(fill(rect, color));
-                if let Some(block) = mark.block {
+                if let Some(block) = mark.block.filter(|_| !self.overview) {
                     if width >= px(2.) {
                         window.paint_quad(fill(
                             Bounds::new(rect.origin, size(px(0.75), rect.size.height)),
@@ -433,7 +457,7 @@ impl Plot for HeapStrip {
         bounds: Bounds<Pixels>,
         _: &App,
     ) -> Option<TooltipState> {
-        if bounds.size.width <= px(0.) {
+        if self.overview || bounds.size.width <= px(0.) {
             return None;
         }
         let block = self
@@ -502,7 +526,16 @@ pub(super) fn view(
     div().debug_selector(|| "heap-map".into()).flex().flex_col().flex_shrink_0().min_w_0().gap_1()
         .p_3().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD))
         .child(div().flex().items_center().justify_between().gap_2()
-            .child(div().text_sm().font_semibold().child("Fragmentation map"))
+            .child(div().flex().items_center().gap_3()
+                .child(div().debug_selector(|| "heap-map-heading".into())
+                    .text_sm().font_semibold().child("Fragmentation map"))
+                .when_some(data.clone().filter(|_| viewport.span < viewport.total), |el, data| {
+                    let mut full = viewport;
+                    full.fit();
+                    el.child(zoom_strip::minimap(&state, "heap-map-minimap", "Heap fragmentation",
+                        HeapStrip { data, viewport: full, selected: None,
+                            bounds: Rc::default(), overview: true }, window, cx))
+                }))
             .child(div().flex().items_center().gap_2()
                 .child(div().debug_selector(move || format!("heap-map-view-{}-{}",viewport.start,viewport.end()))
                     .child(layout::note("heap-map-range", if valid { format!("{}–{} / {} · {:.1}×", compact_size(viewport.start), compact_size(viewport.end()), compact_size(viewport.total), viewport.total as f64 / viewport.span as f64) } else { "Map unavailable".into() })))
@@ -511,7 +544,7 @@ pub(super) fn view(
             .child(match chunks { None => "Chunk map not captured for this frame.", Some([]) => "No chunks captured for this frame.", Some(_) => "Chunk map unavailable: zero-size chunks or byte-size overflow." })))
         .when_some(data, |el,data| {
             el.child(zoom_strip::surface(&state,"heap-map-strip",
-                HeapStrip { data: data.clone(), viewport, selected, bounds },window))
+                HeapStrip { data: data.clone(), viewport, selected, bounds, overview: false },window))
                 .child(layout::note("heap-map-metrics",format!(
                     "Largest free: {} · Fragmentation: {:.1}% · Allocated chunks: {} / {} · Span includes chunk headers",
                     compact_size(data.stats.largest_free),data.stats.fragmentation(),data.stats.used_count,data.blocks.len()
@@ -519,7 +552,7 @@ pub(super) fn view(
         })
         .child(div().min_w_0().debug_selector(move || selected.map_or_else(|| "heap-map-unselected".into(), |b| format!("heap-map-selected-{}",b.index)))
             .child(layout::note("heap-map-inspection",selected.map(Block::description).unwrap_or_else(||
-                "Purple: allocated · Unfilled: free · Hover/click to inspect · Drag or horizontal scroll to pan · Vertical scroll to zoom".into()))))
+                "Purple: allocated · Unfilled: free · Hover/click to inspect · Drag strip or minimap to pan · Vertical scroll to zoom".into()))))
 }
 
 #[cfg(test)]
@@ -556,10 +589,14 @@ mod tests {
 
     #[test]
     fn viewport_zoom_pan_fit_and_capacity_changes_stay_inside_map() {
+        use crate::zoom_strip::Viewport as _;
         let mut v = Viewport::default();
         v.sync(1024);
         v.zoom(2., 0.5);
         assert_eq!((v.start, v.end()), (256, 768));
+        assert_eq!(v.overview_range(), (0.25, 0.75));
+        v.set_overview_start(0.125);
+        assert_eq!((v.start, v.span), (128, 512));
         v.pan(10000);
         assert_eq!((v.start, v.end()), (512, 1024));
         v.pan(-10000);
@@ -591,6 +628,14 @@ mod tests {
         assert_eq!((v.start, v.span), (0, u64::MAX));
         let before = v;
         v.zoom(f64::NAN, 0.5);
+        assert_eq!(v, before);
+        v.zoom(2., 0.5);
+        v.set_overview_start(1.);
+        assert_eq!(v.end(), u64::MAX);
+        v.set_overview_start(-1.);
+        assert_eq!(v.start, 0);
+        let before = v;
+        v.set_overview_start(f64::NAN);
         assert_eq!(v, before);
     }
 
