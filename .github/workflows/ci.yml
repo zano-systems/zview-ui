@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Rust and recording tests (macOS)
+    # GPUI needs native platform libraries even for its headless tests.
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: "1"
+      # Keep backend changes separate from frontend changes under test.
+      ZVIEW_REVISION: 40c85a79ab88491e4050e84e03d94b6790c1dca6
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@1.99.0
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - uses: actions/setup-python@v5
+        with:
+          # Last Python 3.12 release with macOS builds in actions/python-versions.
+          python-version: "3.12.10"
+
+      - name: Install ZView backend
+        run: |
+          # Install only the listed wheels; do not resolve extra dependencies.
+          python -m pip install --only-binary=:all: --no-deps -r .github/requirements-ci.txt
+          # Use the pinned build tools rather than creating an isolated build env.
+          python -m pip install --no-build-isolation --no-deps "zview @ git+https://github.com/rodrigopex/zview.git@${ZVIEW_REVISION}"
+          python -m pip check
+          echo "ZVIEW_PYTHON=$(python -c 'import sys; print(sys.executable)')" >> "$GITHUB_ENV"
+
+      - name: Test recording exporter
+        run: python -m unittest discover -s . -p test_export_recording.py -v
+
+      - name: Generate heap-map integration fixture
+        run: |
+          mkdir -p local
+          python export_recording.py \
+            --recording test-data/zview-bench-60s/capture.ndjson.gz \
+            --elf test-data/zview-bench-60s/zephyr.elf --duration 60 \
+            --output local/bench-with-maps.json
+
+      - name: Run Rust tests including opt-in integration tests
+        run: cargo test --locked -- --include-ignored

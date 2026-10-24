@@ -873,6 +873,35 @@ With ZView's Python dependencies installed, validate the recording exporter:
 python -m unittest discover -s . -p test_export_recording.py -v
 ```
 
+### Continuous integration
+
+[GitHub Actions](.github/workflows/ci.yml) runs on pull requests, pushes to
+`main`, and manual dispatch. The macOS job checks formatting and Clippy,
+runs the Python exporter tests, and runs every Rust test, including the
+three opt-in recording integration tests. Rust 1.99.0, Python 3.12.10, and the
+ZView backend revision are pinned in the workflow. Python 3.12.10 is the last
+3.12 release with macOS builds available through `actions/setup-python`.
+All Python runtime and build dependencies have exact versions in
+[`.github/requirements-ci.txt`](.github/requirements-ci.txt). CI disables
+dependency resolution and build isolation, then runs `pip check` so missing or
+incompatible dependencies fail instead of silently downloading new versions.
+It generates `local/bench-with-maps.json` from the committed recording and
+matching ELF. No probe, QEMU process, or credentials are required.
+
+When updating the backend or Python version, recreate a clean macOS virtual
+environment, install the intended backend and build tools, and refresh the
+complete dependency list with `python -m pip freeze --all`, excluding ZView's
+entry (its revision stays in the workflow). Review every version change and
+rerun the full suite. Update the Rust pin deliberately alongside any necessary
+`Cargo.lock` changes. The hosted macOS image and action tags can still change;
+these pins do not make the entire runner environment immutable.
+
+To run the same Rust suite locally, first install the matching backend as
+described above and generate the heap-map export using the command in
+**Phase 9**, then run `cargo test --locked -- --include-ignored`.
+CI does not replace the manual native visual checks below or validate
+Linux and Windows.
+
 For a manual interaction check, open a dump, collapse and expand the sidebar,
 open Help. Open thread details by clicking a row or pressing Enter after selecting
 with Up/Down; return with Escape, the Back button, and breadcrumb.
