@@ -10,6 +10,7 @@ mod msgq_detail;
 mod mutex_detail;
 mod recording;
 mod semaphore_detail;
+mod session;
 mod slab_detail;
 mod step_area_chart;
 #[cfg(test)]
@@ -299,6 +300,9 @@ impl ThreadsApp {
     }
 
     fn open_recording(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if self.loading.is_some() {
+            return;
+        }
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -328,6 +332,9 @@ impl ThreadsApp {
     }
 
     fn open(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if self.loading.is_some() {
+            return;
+        }
         let paths = cx.prompt_for_paths(PathPromptOptions {
             files: true,
             directories: false,
@@ -1120,35 +1127,7 @@ impl Render for ThreadsApp {
                                     )
                                     .child(self.breadcrumbs(cx)),
                             )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_shrink_0()
-                                    .flex_wrap()
-                                    .gap_2()
-                                    .child(
-                                        Button::new("open")
-                                            .label("Open dump")
-                                            .disabled(self.loading.is_some())
-                                            .on_click(cx.listener(Self::open)),
-                                    )
-                                    .child(
-                                        div().debug_selector(|| "open-recording".into()).child(Button::new("open-recording")
-                                            .label("Open recording")
-                                            .disabled(self.loading.is_some())
-                                            .on_click(cx.listener(Self::open_recording))),
-                                    )
-                                    .child(
-                                        Button::new("reload")
-                                            .label("Reload")
-                                            .disabled(self.source.is_none() || self.loading.is_some())
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                if let Some(path) = this.source.clone() {
-                                                    this.start_load(path, this.recording_elf.clone(), cx);
-                                                }
-                                            })),
-                                    ),
-                            ),
+                            .child(self.session_menu(cx)),
                     )
                     .when(self.screen == Screen::Overview, |el| {
                         el.child(

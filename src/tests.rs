@@ -7,6 +7,8 @@ use gpui_kit::init;
 mod heap_map_tests;
 #[path = "layout_tests.rs"]
 mod layout_tests;
+#[path = "session_tests.rs"]
+mod session_tests;
 #[path = "workq_activity_tests.rs"]
 mod workq_activity_tests;
 
@@ -1208,6 +1210,20 @@ fn setup(cx: &mut TestAppContext) -> (Entity<ThreadsApp>, VisualTestContext) {
     (app, cx)
 }
 
+fn open_session_menu(cx: &mut VisualTestContext) {
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    let trigger = cx.debug_bounds("session-menu-trigger").unwrap().center();
+    cx.simulate_click(trigger, Modifiers::default());
+    cx.update(|window, cx| window.draw(cx).clear(cx));
+    assert!(cx.debug_bounds("session-menu-source").is_some());
+}
+
+fn choose_open_recording(cx: &mut VisualTestContext) {
+    open_session_menu(cx);
+    // Kit first selects the heading, then skips non-interactive/disabled entries.
+    cx.simulate_keystrokes("down down down enter");
+}
+
 #[gpui_kit::test]
 fn opening_and_reloading_documents_start_paused_at_first_frame(cx: &mut TestAppContext) {
     let (_, mut cx) = setup(cx);
@@ -1234,8 +1250,7 @@ fn opening_and_reloading_documents_start_paused_at_first_frame(cx: &mut TestAppC
 #[gpui_kit::test]
 fn recording_prompts_can_be_cancelled_without_changing_session(cx: &mut TestAppContext) {
     let (app, mut cx) = setup(cx);
-    let button = cx.debug_bounds("open-recording").unwrap().center();
-    cx.simulate_click(button, Modifiers::default());
+    choose_open_recording(&mut cx);
     assert!(cx.did_prompt_for_paths());
     cx.simulate_path_prompt_response(|options| {
         assert!(options.prompt.as_ref().unwrap().contains("recording"));
@@ -1243,7 +1258,7 @@ fn recording_prompts_can_be_cancelled_without_changing_session(cx: &mut TestAppC
     });
     cx.run_until_parked();
     assert!(!cx.did_prompt_for_paths());
-    cx.simulate_click(button, Modifiers::default());
+    choose_open_recording(&mut cx);
     cx.simulate_path_prompt_response(|_| Some(vec!["capture.ndjson.gz".into()]));
     cx.run_until_parked();
     assert!(cx.did_prompt_for_paths());
@@ -1333,8 +1348,7 @@ fn direct_recording_opens_via_prompts_and_reloads_with_its_elf(cx: &mut TestAppC
     let fixture =
         std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("test-data/zview-bench-60s");
     let (app, mut cx) = setup(cx);
-    let button = cx.debug_bounds("open-recording").unwrap().center();
-    cx.simulate_click(button, Modifiers::default());
+    choose_open_recording(&mut cx);
     cx.simulate_path_prompt_response(|_| Some(vec![fixture.join("capture.ndjson.gz")]));
     cx.run_until_parked();
     cx.simulate_path_prompt_response(|_| Some(vec![fixture.join("zephyr.elf")]));
@@ -1349,10 +1363,11 @@ fn direct_recording_opens_via_prompts_and_reloads_with_its_elf(cx: &mut TestAppC
     });
     cx.update(|window, cx| {
         app.update(cx, |app, cx| {
-            app.reset_playback(window, cx);
-            app.start_load(app.source.clone().unwrap(), app.recording_elf.clone(), cx);
+            app.step(true, window, cx);
         });
     });
+    open_session_menu(&mut cx);
+    cx.simulate_keystrokes("down down down down enter");
     cx.run_until_parked();
     app.read_with(&cx, |app, _| {
         assert!(app.error.is_none(), "{:?}", app.error);
