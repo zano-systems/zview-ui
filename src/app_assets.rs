@@ -1,7 +1,7 @@
 use gpui_kit::{AssetSource, Result, SharedString, assets};
 use std::borrow::Cow;
 
-assets::icon_assets!(ExtraIcons, [Spool, Activity, CircleDashed]);
+assets::icon_assets!(ExtraIcons, [Spool, Boxes, Activity, CircleDashed]);
 
 pub(super) struct AppAssets;
 
@@ -27,9 +27,10 @@ mod tests {
     use super::{AppAssets, AssetSource};
 
     #[test]
-    fn thread_and_default_control_icons_are_bundled() {
+    fn navigation_thread_and_default_control_icons_are_bundled() {
         for path in [
             "icons/spool.svg",
+            "icons/boxes.svg",
             "icons/activity.svg",
             "icons/circle-dashed.svg",
             "icons/play.svg",
