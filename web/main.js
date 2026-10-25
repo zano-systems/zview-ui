@@ -1,8 +1,12 @@
-import init, { start, load_json } from "./pkg/zview_desktop.js";
+import init, { start, load_json, show_file_error } from "./pkg/zview_desktop.js";
+import { createDocumentLoader } from "./documents.mjs";
 
-const LIMIT = 16 * 1024 * 1024;
 const status = document.querySelector("#status");
 const picker = document.querySelector("#json-file");
+const loadDocument = createDocumentLoader({
+  install: load_json,
+  reportError: show_file_error,
+});
 
 function showError(error) {
   console.error(error);
@@ -26,11 +30,14 @@ picker.addEventListener("change", async () => {
   const file = picker.files[0];
   if (!file) return;
   try {
-    if (file.size > LIMIT) throw new Error("Dump exceeds the 16 MiB limit.");
-    const text = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer());
-    load_json(text, file.name);
-    status.hidden = true;
+    await loadDocument(() => ({
+      name: file.name,
+      size: file.size,
+      readBytes: () => file.arrayBuffer(),
+    }));
   } catch (error) {
+    // File errors use the shared in-app banner. This is only a host failure,
+    // such as losing the GPUI window while trying to report that error.
     showError(error);
   }
 });
@@ -49,19 +56,24 @@ try {
     )),
   ]);
 
-  // Only the local launcher provides a session. Static hosting uses the sample.
-  const session = await fetch(new URL("./session.json", import.meta.url));
-  if (session.ok) {
-    const { name } = await session.json();
-    if (name) {
-      const bytes = await getBytes("./initial.json");
-      if (bytes.length > LIMIT) throw new Error("Dump exceeds the 16 MiB limit.");
-      load_json(new TextDecoder("utf-8", { fatal: true }).decode(bytes), name);
-    }
-  } else if (session.status !== 404) {
-    throw new Error(`Cannot load initial session: HTTP ${session.status}`);
-  }
+  // The window is usable now, even if the initial JSON is still being fetched.
+  // Recoverable load errors must not restore the startup overlay over its menu.
   status.hidden = true;
+  // Only the local launcher provides a session. Static hosting uses the sample.
+  await loadDocument(async () => {
+    const session = await fetch(new URL("./session.json", import.meta.url));
+    if (session.ok) {
+      const { name } = await session.json();
+      return name ? {
+        name,
+        readBytes: () => getBytes("./initial.json"),
+      } : null;
+    }
+    if (session.status !== 404) {
+      throw new Error(`Cannot load initial session: HTTP ${session.status}`);
+    }
+    return null;
+  });
   // Signals host startup, not proof that the GPU has finished its first frame.
   document.documentElement.dataset.zviewReady = "true";
 } catch (error) {

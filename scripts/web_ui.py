@@ -61,7 +61,7 @@ def build(release=False):
         str(bindgen), str(wasm), "--target", "web", "--no-typescript",
         "--out-dir", str(SITE / "pkg"),
     ], check=True)
-    for name in ("index.html", "main.js"):
+    for name in ("index.html", "main.js", "documents.mjs"):
         shutil.copyfile(ROOT / "web" / name, SITE / name)
     fonts = SITE / "fonts"
     fonts.mkdir(exist_ok=True)

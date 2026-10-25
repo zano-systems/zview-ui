@@ -76,6 +76,28 @@ pub fn load_json(text: &str, name: &str) -> Result<(), JsValue> {
     } else {
         model::parse(text)
     };
+    update_view(|this, window, cx| {
+        match frames {
+            Ok(frames) => this.install(frames, PathBuf::from(name), None, window, cx),
+            Err(error) => this.error = Some(error),
+        }
+        cx.notify();
+    })
+}
+
+/// File size, UTF-8, and browser read errors belong in the same non-obstructive
+/// banner as parse errors; they must not replace the current document.
+#[wasm_bindgen]
+pub fn show_file_error(message: &str) -> Result<(), JsValue> {
+    update_view(|this, _, cx| {
+        this.error = Some(message.to_owned());
+        cx.notify();
+    })
+}
+
+fn update_view(
+    update: impl FnOnce(&mut ThreadsApp, &mut Window, &mut Context<ThreadsApp>),
+) -> Result<(), JsValue> {
     APPLICATION.with(|slot| {
         let app = slot.borrow();
         let app = app
@@ -88,15 +110,7 @@ pub fn load_json(text: &str, name: &str) -> Result<(), JsValue> {
                 .ok_or_else(|| JsValue::from_str("No ZView window."))?;
             app.update(|cx| {
                 window.update(cx, |_, window, cx| {
-                    view.update(cx, |this, cx| {
-                        match frames {
-                            Ok(frames) => {
-                                this.install(frames, PathBuf::from(name), None, window, cx)
-                            }
-                            Err(error) => this.error = Some(error),
-                        }
-                        cx.notify();
-                    });
+                    view.update(cx, |this, cx| update(this, window, cx));
                 })
             })
             .map_err(|error| JsValue::from_str(&error.to_string()))
