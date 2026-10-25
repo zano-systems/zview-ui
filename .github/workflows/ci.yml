@@ -14,6 +14,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  web:
+    name: Browser build and launcher tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: web
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12.10"
+      - name: Test local web launcher
+        run: |
+          mkdir -p target
+          python3 -m unittest discover -s scripts -p test_web_ui.py -v
+      - name: Install matching wasm-bindgen
+        run: cargo install wasm-bindgen-cli --version 0.2.129 --locked --root target/tools
+      - name: Build static browser application
+        run: python3 scripts/web_ui.py build
+
   test:
     name: Rust and recording tests (macOS)
     # GPUI needs native platform libraries even for its headless tests.
