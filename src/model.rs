@@ -1,4 +1,5 @@
 use serde::Deserialize;
+#[cfg(not(target_family = "wasm"))]
 use std::{fs, path::Path};
 
 #[derive(Clone, Debug, Deserialize)]
@@ -396,6 +397,7 @@ pub fn parse(input: &str) -> Result<Vec<Frame>, String> {
     Ok(frames)
 }
 
+#[cfg(not(target_family = "wasm"))]
 pub fn load(path: &Path) -> Result<Vec<Frame>, String> {
     use std::io::Read;
     const LIMIT: u64 = 16 * 1024 * 1024;

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>ZView</title>
+    <link rel="icon" href="data:,">
+    <style>
+      * { box-sizing: border-box; }
+      html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #1e1d34; color: #e6dfef; }
+      body { font-family: system-ui, sans-serif; }
+      body > canvas { position: fixed; inset: 0; display: block; width: 100%; height: 100%; }
+      #status { position: fixed; z-index: 10; top: 16px; left: 16px; right: 16px; padding: 12px; background: #25223b; white-space: pre-wrap; }
+      #status[hidden] { display: none; }
+    </style>
+  </head>
+  <body>
+    <div id="status" role="status">Loading ZView…</div>
+    <input id="json-file" type="file" accept=".json,application/json" hidden>
+    <noscript>ZView needs JavaScript and WebAssembly enabled.</noscript>
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
