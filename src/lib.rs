@@ -71,6 +71,36 @@ const PURPLE: u32 = 0xac91f5;
 const GREEN: u32 = 0x69cbb1;
 const BLUE: u32 = 0x75b3f1;
 
+fn help_text(browser: bool) -> String {
+    let source_help = if browser {
+        concat!(
+            "Open dump selects an already-decoded JSON snapshot or snapshot array from your device. ",
+            "Files are read locally without uploading. Select a changed file again to reload it. ",
+            "A failed load leaves the current session intact. Arrays enable frame navigation and charts. ",
+        )
+    } else {
+        concat!(
+            "Open dump loads zview dump --json output. Open recording asks for a .ndjson.gz recording and its matching ELF; Python with ZView dependencies is required (ZVIEW_PYTHON). ",
+            "Reload repeats the import. Cancel or a failed import leaves the current session intact. Arrays enable frame navigation and charts. ",
+        )
+    };
+    format!(
+        "{source_help}{}",
+        concat!(
+            "Click a thread row to open details. Focus the thread table and use Up/Down then Enter. ",
+            "Escape or Back to Threads returns without changing session time. CPU excludes idle. ",
+            "Stack watermark is not total device RAM. Options are raw target flags. ",
+            "Expand Kernel objects in the sidebar to filter by type; search filters by name/address. ",
+            "Click a kernel-object row, or focus it with Tab and press Enter, for details. ",
+            "Escape and Back return with filters intact. Breadcrumbs open their named list with search cleared; Kernel objects shows all types. ",
+            "Previous/Next changes the shared snapshot. Histories show sampled counts/depth, not individual operations. ",
+            "State bars show counts, occupancy, or lock/busy state—not CPU usage. ",
+            "Unknown wait queues are labelled unavailable; known empty queues are blank. ",
+            "Heap maps show captured chunks and relative offsets, not absolute block addresses.",
+        )
+    )
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Screen {
     Overview,
@@ -706,54 +736,116 @@ impl ThreadsApp {
                     }))
             })
             .collect::<Vec<_>>();
-        Sidebar::new("navigation").w(px(230.)).collapsed(self.collapsed).collapsible(true)
-            .header(SidebarHeader::new().p_4().child(
-                div().flex().items_center().gap_3()
-                    .child(div().size_9().rounded_lg().bg(rgb(0x7561cd)).flex().items_center().justify_center().child("Z"))
-                    .when(!self.collapsed, |el| el.child(div().flex().flex_col()
-                        .child(div().font_semibold().child("ZView"))
-                        .child(div().text_xs().text_color(rgb(MUTED)).child("Zephyr runtime inspector"))))
-            ))
-            .child(SidebarGroup::new("Monitor").child(SidebarMenu::new()
-                .child(SidebarMenuItem::new("Threads").icon(Icon::new(assets::IconName::Spool)).active(!in_objects)
-                    .on_click(cx.listener(|this, _, window, cx| this.show_overview(window, cx))))
-                .child(SidebarMenuItem::new("Kernel objects").icon(Icon::new(assets::IconName::Boxes))
-                        .active(in_objects)
-                        .default_open(in_objects)
-                        .click_to_open(true)
-                        .children(types)
-                        .suffix({
-                            let count = objects.len();
-                            move |_, _| div().debug_selector(|| "kernel-navigation".into()).text_xs().child(count.to_string())
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            this.show_kernel_objects(this.object_kind, window, cx);
-                        })))))
-            .child(SidebarGroup::new("Session").child(SidebarMenu::new()
-                .child(SidebarMenuItem::new("Help & shortcuts").icon(IconName::Info)
-                    .on_click(cx.listener(|_, _, window, cx| {
-                        window.open_dialog(cx, |dialog, _, _| dialog.title("ZView desktop").child(
-                            concat!(
-                                "Open dump loads zview dump --json output. Open recording asks for a .ndjson.gz recording and its matching ELF; Python with ZView dependencies is required (ZVIEW_PYTHON). ",
-                                "Reload repeats the import. Cancel or a failed import leaves the current session intact. Arrays enable frame navigation and charts. ",
-                                "Click a thread row to open details. Focus the thread table and use Up/Down then Enter. ",
-                                "Escape or Back to Threads returns without changing session time. CPU excludes idle. ",
-                                "Stack watermark is not total device RAM. Options are raw target flags. ",
-                                "Expand Kernel objects in the sidebar to filter by type; search filters by name/address. ",
-                                "Click a kernel-object row, or focus it with Tab and press Enter, for details. ",
-                                "Escape and Back return with filters intact. Breadcrumbs open their named list with search cleared; Kernel objects shows all types. ",
-                                "Previous/Next changes the shared snapshot. Histories show sampled counts/depth, not individual operations. ",
-                                "State bars show counts, occupancy, or lock/busy state—not CPU usage. ",
-                                "Unknown wait queues are labelled unavailable; known empty queues are blank. ",
-                                "Heap maps show captured chunks and relative offsets, not absolute block addresses."
+        Sidebar::new("navigation")
+            .w(px(230.))
+            .collapsed(self.collapsed)
+            .collapsible(true)
+            .header(
+                SidebarHeader::new().p_4().child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_3()
+                        .child(
+                            div()
+                                .size_9()
+                                .rounded_lg()
+                                .bg(rgb(0x7561cd))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child("Z"),
+                        )
+                        .when(!self.collapsed, |el| {
+                            el.child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .child(div().font_semibold().child("ZView"))
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(rgb(MUTED))
+                                            .child("Zephyr runtime inspector"),
+                                    ),
                             )
-                        ));
-                    })))))
-            .footer(SidebarFooter::new().p_4().when(!self.collapsed, |el| el.child(
-                div().flex().flex_col().gap_2().text_xs().text_color(rgb(MUTED))
-                    .child(if self.recording_elf.is_some() { "RECORDING SESSION" } else if self.source.is_some() { "DUMP SESSION" } else { "BUNDLED SAMPLE" })
-                    .child(format!("Frame {} of {} · offline", self.frame + 1, self.frames.len()))
-            )))
+                        }),
+                ),
+            )
+            .child(
+                SidebarGroup::new("Monitor").child(
+                    SidebarMenu::new()
+                        .child(
+                            SidebarMenuItem::new("Threads")
+                                .icon(Icon::new(assets::IconName::Spool))
+                                .active(!in_objects)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.show_overview(window, cx)
+                                })),
+                        )
+                        .child(
+                            SidebarMenuItem::new("Kernel objects")
+                                .icon(Icon::new(assets::IconName::Boxes))
+                                .active(in_objects)
+                                .default_open(in_objects)
+                                .click_to_open(true)
+                                .children(types)
+                                .suffix({
+                                    let count = objects.len();
+                                    move |_, _| {
+                                        div()
+                                            .debug_selector(|| "kernel-navigation".into())
+                                            .text_xs()
+                                            .child(count.to_string())
+                                    }
+                                })
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.show_kernel_objects(this.object_kind, window, cx);
+                                })),
+                        ),
+                ),
+            )
+            .child(
+                SidebarGroup::new("Session").child(
+                    SidebarMenu::new().child(
+                        SidebarMenuItem::new("Help & shortcuts")
+                            .icon(IconName::Info)
+                            .on_click(cx.listener(|_, _, window, cx| {
+                                window.open_dialog(cx, |dialog, _, _| {
+                                    dialog
+                                        .title(if cfg!(target_family = "wasm") {
+                                            "ZView browser"
+                                        } else {
+                                            "ZView desktop"
+                                        })
+                                        .child(help_text(cfg!(target_family = "wasm")))
+                                });
+                            })),
+                    ),
+                ),
+            )
+            .footer(SidebarFooter::new().p_4().when(!self.collapsed, |el| {
+                el.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .text_xs()
+                        .text_color(rgb(MUTED))
+                        .child(if self.recording_elf.is_some() {
+                            "RECORDING SESSION"
+                        } else if self.source.is_some() {
+                            "DUMP SESSION"
+                        } else {
+                            "BUNDLED SAMPLE"
+                        })
+                        .child(format!(
+                            "Frame {} of {} · offline",
+                            self.frame + 1,
+                            self.frames.len()
+                        )),
+                )
+            }))
     }
 
     fn chart_card(

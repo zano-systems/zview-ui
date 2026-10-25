@@ -4,7 +4,7 @@ use std::borrow::Cow;
 assets::icon_assets!(ExtraIcons, [Spool, Boxes, Activity, CircleDashed]);
 
 // Embed web controls too: no CDN requests or asset base-path assumptions.
-#[cfg(target_family = "wasm")]
+#[cfg(any(test, target_family = "wasm"))]
 assets::icon_assets!(
     WebIcons,
     [
@@ -34,6 +34,7 @@ assets::icon_assets!(
         EyeOff,
         File,
         Folder,
+        Inbox,
         Info,
         Loader,
         LoaderCircle,
@@ -84,7 +85,20 @@ impl AssetSource for AppAssets {
 
 #[cfg(test)]
 mod tests {
-    use super::{AppAssets, AssetSource};
+    use super::{AppAssets, AssetSource, WebIcons};
+
+    #[test]
+    fn web_search_controls_and_empty_state_icons_are_bundled() {
+        for path in [
+            "icons/search.svg",
+            "icons/chevron-down.svg",
+            "icons/check.svg",
+            "icons/close.svg",
+            "icons/inbox.svg",
+        ] {
+            assert!(WebIcons.load(path).unwrap().is_some(), "{path}");
+        }
+    }
 
     #[test]
     fn navigation_thread_and_default_control_icons_are_bundled() {

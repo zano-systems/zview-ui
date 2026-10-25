@@ -12,6 +12,32 @@ mod session_tests;
 #[path = "workq_activity_tests.rs"]
 mod workq_activity_tests;
 
+#[test]
+fn browser_help_only_describes_supported_file_actions() {
+    let text = super::help_text(true);
+    assert!(text.contains("already-decoded JSON"));
+    assert!(text.contains("read locally without uploading"));
+    assert!(text.contains("Select a changed file again"));
+    assert!(text.contains("Heap maps show captured chunks"));
+    for unsupported in [
+        "Open recording",
+        ".ndjson.gz",
+        "ZVIEW_PYTHON",
+        "Reload repeats",
+    ] {
+        assert!(!text.contains(unsupported), "{unsupported}");
+    }
+}
+
+#[test]
+fn native_help_keeps_recording_import_and_reload_instructions() {
+    let text = super::help_text(false);
+    assert!(text.contains("Open recording"));
+    assert!(text.contains("ZVIEW_PYTHON"));
+    assert!(text.contains("Reload repeats the import"));
+    assert!(text.contains("Heap maps show captured chunks"));
+}
+
 /// This integration check deliberately requires the full, regenerated capture
 /// rather than silently falling back to a synthetic or map-less document.
 #[gpui_kit::test]
