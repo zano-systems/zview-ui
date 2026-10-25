@@ -88,6 +88,7 @@ another file.
 cargo fmt --check
 cargo test --locked
 cargo clippy --locked --all-targets -- -D warnings
+node --test web/documents.test.mjs
 python3 -m unittest discover -s scripts -p test_web_ui.py -v
 cargo +nightly clippy --locked --lib --target wasm32-unknown-unknown -- -D warnings
 just web-build
