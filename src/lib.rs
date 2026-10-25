@@ -8,6 +8,7 @@ mod layout;
 mod model;
 mod msgq_detail;
 mod mutex_detail;
+#[cfg(not(target_family = "wasm"))]
 mod recording;
 mod semaphore_detail;
 mod session;
@@ -18,6 +19,8 @@ mod tests;
 mod thread_detail;
 mod time_series_chart;
 mod wait_queue;
+#[cfg(target_family = "wasm")]
+mod web;
 mod workq_activity;
 mod workq_detail;
 mod zoom_strip;
@@ -117,7 +120,7 @@ struct ThreadsApp {
     frame: usize,
     playing: bool,
     playback_task: Option<Task<()>>,
-    playback_anchor: Option<(std::time::Instant, f64)>,
+    playback_anchor: Option<(web_time::Instant, f64)>,
     playback_position: Option<f64>,
     source: Option<PathBuf>,
     recording_elf: Option<PathBuf>,
@@ -151,17 +154,35 @@ impl Drop for ThreadsApp {
 }
 
 impl ThreadsApp {
+    #[cfg(not(target_family = "wasm"))]
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let source = std::env::args_os().nth(1).map(PathBuf::from);
         Self::from_source(source, window, cx)
     }
 
+    #[cfg(not(target_family = "wasm"))]
     fn from_source(source: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let loaded = source.as_deref().map(model::load);
         let error = loaded.as_ref().and_then(|r| r.as_ref().err().cloned());
         let frames = loaded.and_then(Result::ok).unwrap_or_else(|| {
             model::parse(include_str!("../sample.json")).expect("valid bundled dump")
         });
+        Self::from_frames(
+            frames,
+            if error.is_none() { source } else { None },
+            error,
+            window,
+            cx,
+        )
+    }
+
+    fn from_frames(
+        frames: Vec<Frame>,
+        source: Option<PathBuf>,
+        error: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let heap = cx.new(|cx| {
             SelectState::new(SearchableVec::new(Vec::<String>::new()), None, window, cx)
                 .searchable(true)
@@ -184,7 +205,7 @@ impl ThreadsApp {
             playback_anchor: None,
             playback_position: None,
             frames,
-            source: if error.is_none() { source } else { None },
+            source,
             recording_elf: None,
             loading: None,
             error,
@@ -260,6 +281,7 @@ impl ThreadsApp {
         self.sync_heaps(window, cx);
     }
 
+    #[cfg(not(target_family = "wasm"))]
     fn start_load(&mut self, path: PathBuf, elf: Option<PathBuf>, cx: &mut Context<Self>) {
         if self.loading.is_some() {
             return;
@@ -299,6 +321,7 @@ impl ThreadsApp {
         .detach();
     }
 
+    #[cfg(not(target_family = "wasm"))]
     fn open_recording(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         if self.loading.is_some() {
             return;
@@ -331,6 +354,7 @@ impl ThreadsApp {
         .detach();
     }
 
+    #[cfg(not(target_family = "wasm"))]
     fn open(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
         if self.loading.is_some() {
             return;
@@ -1425,7 +1449,8 @@ fn apply_theme(cx: &mut App) {
     });
 }
 
-/// Run the native application.
+/// Run the native application. The browser entry point lives in `web`.
+#[cfg(not(target_family = "wasm"))]
 pub fn run() {
     application().with_assets(app_assets::AppAssets).run(|cx| {
         init(cx);

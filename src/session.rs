@@ -31,6 +31,7 @@ impl ThreadsApp {
                         // Read when opened, not when the toolbar was rendered.
                         let state = view.read(cx);
                         let loading = state.loading.is_some();
+                        #[cfg(not(target_family = "wasm"))]
                         let can_reload = state.source.is_some() && !loading;
                         let kind = if state.recording_elf.is_some() {
                             "Offline · Recording"
@@ -49,10 +50,13 @@ impl ThreadsApp {
                             .as_ref()
                             .map(|p| format!("ELF: {}", p.display()));
                         let open_dump = app.clone();
+                        #[cfg(not(target_family = "wasm"))]
                         let open_recording = app.clone();
+                        #[cfg(not(target_family = "wasm"))]
                         let reload = app.clone();
                         let cancel = app.clone();
-                        menu.min_w(px(300.))
+                        let menu = menu
+                            .min_w(px(300.))
                             .max_w(px(360.))
                             .label(kind)
                             .item(
@@ -82,7 +86,9 @@ impl ThreadsApp {
                                         app.open(event, window, cx);
                                     });
                                 },
-                            ))
+                            ));
+                        #[cfg(not(target_family = "wasm"))]
+                        let menu = menu
                             .item(
                                 PopupMenuItem::new("Open recording…")
                                     .disabled(loading)
@@ -102,22 +108,24 @@ impl ThreadsApp {
                                             }
                                         });
                                     }),
-                            )
-                            .when(loading, |menu| {
-                                menu.separator()
-                                    .item(PopupMenuItem::new("Cancel import").on_click(
-                                        move |_, _, cx| {
-                                            let _ = cancel.update(cx, |app, _| {
-                                                if let Some(cancel) = &app.loading {
-                                                    cancel.store(
-                                                        true,
-                                                        std::sync::atomic::Ordering::Relaxed,
-                                                    );
-                                                }
-                                            });
-                                        },
-                                    ))
-                            })
+                            );
+                        #[cfg(target_family = "wasm")]
+                        let menu = menu.label("JSON only · Select a file again to reload.");
+                        menu.when(loading, |menu| {
+                            menu.separator()
+                                .item(PopupMenuItem::new("Cancel import").on_click(
+                                    move |_, _, cx| {
+                                        let _ = cancel.update(cx, |app, _| {
+                                            if let Some(cancel) = &app.loading {
+                                                cancel.store(
+                                                    true,
+                                                    std::sync::atomic::Ordering::Relaxed,
+                                                );
+                                            }
+                                        });
+                                    },
+                                ))
+                        })
                     }),
             )
     }

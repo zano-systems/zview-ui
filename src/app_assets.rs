@@ -3,6 +3,56 @@ use std::borrow::Cow;
 
 assets::icon_assets!(ExtraIcons, [Spool, Boxes, Activity, CircleDashed]);
 
+// Embed web controls too: no CDN requests or asset base-path assumptions.
+#[cfg(target_family = "wasm")]
+assets::icon_assets!(
+    WebIcons,
+    [
+        ArrowDown,
+        ArrowLeft,
+        ArrowRight,
+        ArrowUp,
+        Asterisk,
+        Calendar,
+        Check,
+        ChevronDown,
+        ChevronLeft,
+        ChevronRight,
+        ChevronUp,
+        ChevronsUpDown,
+        CircleAlert,
+        CircleCheck,
+        CircleX,
+        Close,
+        Copy,
+        Dash,
+        Delete,
+        Ellipsis,
+        EllipsisVertical,
+        ExternalLink,
+        Eye,
+        EyeOff,
+        File,
+        Folder,
+        Info,
+        Loader,
+        LoaderCircle,
+        Maximize,
+        Minimize,
+        Minus,
+        PanelLeftClose,
+        PanelLeftOpen,
+        Pause,
+        Play,
+        Plus,
+        RefreshCw,
+        RotateCw,
+        Search,
+        Settings,
+        TriangleAlert,
+    ]
+);
+
 pub(super) struct AppAssets;
 
 impl AssetSource for AppAssets {
@@ -10,11 +60,21 @@ impl AssetSource for AppAssets {
         if let Some(bytes) = ExtraIcons.load(path)? {
             return Ok(Some(bytes));
         }
-        assets::Assets.load(path)
+        #[cfg(not(target_family = "wasm"))]
+        {
+            assets::Assets.load(path)
+        }
+        #[cfg(target_family = "wasm")]
+        {
+            WebIcons.load(path)
+        }
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
+        #[cfg(not(target_family = "wasm"))]
         let mut paths = assets::Assets.list(path)?;
+        #[cfg(target_family = "wasm")]
+        let mut paths = WebIcons.list(path)?;
         paths.extend(ExtraIcons.list(path)?);
         paths.sort();
         paths.dedup();

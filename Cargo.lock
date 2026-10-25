@@ -8551,9 +8551,14 @@ dependencies = [
 name = "zview-desktop"
 version = "0.2.0"
 dependencies = [
+ "console_error_panic_hook",
+ "futures-channel",
  "gpui-kit",
  "gpui-pre",
  "lyon",
  "serde",
  "serde_json",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-time",
 ]
