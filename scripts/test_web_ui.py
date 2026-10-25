@@ -53,9 +53,15 @@ class ServerTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(dir=ROOT / "target")
         self.addCleanup(self.directory.cleanup)
-        site = Path(self.directory.name)
-        (site / "index.html").write_text("<title>ZView</title>", encoding="utf-8")
-        self.site_patch = patch("web_ui.SITE", site)
+        parent = Path(self.directory.name)
+        self.site = parent / "site"
+        self.site.mkdir()
+        (self.site / "index.html").write_text("<title>ZView</title>", encoding="utf-8")
+        # A one-level escape must hit an existing file, not pass by accident
+        # because the requested resource does not exist outside the site.
+        self.sentinel = b"private parent-directory sentinel"
+        (parent / "outside.txt").write_bytes(self.sentinel)
+        self.site_patch = patch("web_ui.SITE", self.site)
         self.site_patch.start()
         self.addCleanup(self.site_patch.stop)
         self.document = b'{"threads":[]}'
@@ -73,11 +79,14 @@ class ServerTests(unittest.TestCase):
         self.server.server_close()
 
     def get(self, path, headers=None):
+        return self.request("GET", path, headers)
+
+    def request(self, method, path, headers=None):
         connection = http.client.HTTPConnection("127.0.0.1", self.server.server_port)
         try:
-            connection.request("GET", path, headers=headers or {})
+            connection.request(method, path, headers=headers or {})
             response = connection.getresponse()
-            return response.status, dict(response.getheaders()), response.read()
+            return response.status, response.headers, response.read()
         finally:
             connection.close()
 
@@ -91,19 +100,39 @@ class ServerTests(unittest.TestCase):
         self.assertNotIn("Access-Control-Allow-Origin", headers)
         session = json.loads(self.get("/session.json")[2])
         self.assertEqual(session, {"name": "decoded data.json"})
-        self.assertFalse((Path(self.directory.name) / "initial.json").exists())
+        self.assertFalse((self.site / "initial.json").exists())
 
     def test_does_not_serve_repository_or_parent_paths_or_directory_lists(self):
-        for path in ("/Cargo.toml", "/sample.json", "/../Cargo.toml", "/%2e%2e/Cargo.toml"):
-            self.assertEqual(self.get(path)[0], 404)
-        (Path(self.directory.name) / "fonts").mkdir()
+        for method in ("GET", "HEAD"):
+            for path in (
+                "/Cargo.toml", "/sample.json",
+                "/../outside.txt", "/%2e%2e/outside.txt",
+            ):
+                with self.subTest(method=method, path=path):
+                    status, _, body = self.request(method, path)
+                    self.assertEqual(status, 404)
+                    self.assertNotIn(self.sentinel, body)
+        (self.site / "fonts").mkdir()
         self.assertEqual(self.get("/fonts/")[0], 404)
 
     def test_rejects_foreign_hosts_and_cross_site_requests(self):
-        self.assertEqual(self.get("/initial.json", {"Host": "example.com"})[0], 403)
-        self.assertEqual(
-            self.get("/initial.json", {"Sec-Fetch-Site": "cross-site"})[0], 403
-        )
+        for method in ("GET", "HEAD"):
+            for path in ("/index.html", "/initial.json", "/session.json"):
+                for headers in (
+                    {"Host": "example.com"},
+                    {"Sec-Fetch-Site": "cross-site"},
+                    {"Host": "example.com", "Sec-Fetch-Site": "cross-site"},
+                ):
+                    with self.subTest(method=method, path=path, headers=headers):
+                        self.assertEqual(self.request(method, path, headers)[0], 403)
+
+    def test_allows_same_origin_get_and_head_for_static_files(self):
+        get_status, get_headers, get_body = self.get("/index.html")
+        head_status, head_headers, head_body = self.request("HEAD", "/index.html")
+        self.assertEqual((get_status, head_status), (200, 200))
+        self.assertEqual(head_body, b"")
+        self.assertEqual(head_headers["Content-Length"], str(len(get_body)))
+        self.assertEqual(head_headers["Content-Type"], get_headers["Content-Type"])
 
 
 if __name__ == "__main__":

@@ -96,15 +96,21 @@ class Handler(SimpleHTTPRequestHandler):
         self.name = name
         super().__init__(*args, directory=str(SITE), **kwargs)
 
-    def do_GET(self):
+    def parse_request(self):
+        if not super().parse_request():
+            return False
         # Reject foreign Host headers (DNS rebinding) and cross-site fetches.
+        # Check before method dispatch so HEAD cannot bypass the GET boundary.
         port = self.server.server_port
         if self.headers.get("Host") not in (f"127.0.0.1:{port}", f"localhost:{port}"):
             self.send_error(403)
-            return
+            return False
         if self.headers.get("Sec-Fetch-Site") == "cross-site":
             self.send_error(403)
-            return
+            return False
+        return True
+
+    def do_GET(self):
         path = urlsplit(self.path).path
         if path == "/session.json":
             self.send_bytes(json.dumps({"name": self.name}).encode(), "application/json")
