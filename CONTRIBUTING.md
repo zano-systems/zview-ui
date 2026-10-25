@@ -1,5 +1,8 @@
 # Contributing
 
+ZView UI is experimental and under construction. The project is not open for
+contributions at this stage. The conventions below are retained for maintainers.
+
 ## Versions
 
 Use [Semantic Versioning](https://semver.org/). The application version in
@@ -41,6 +44,7 @@ fix(recording): retain the current session after failed imports
 docs: explain west module setup
 ```
 
-Work on a separate branch and open a pull request rather than pushing directly
-to `main`. Before requesting review, run the checks in README.md and report
-any manual visual or platform checks that were not performed.
+Maintainers should work on a separate branch and open a pull request rather than
+pushing directly to `main`. Before requesting review, run `cargo fmt --check`,
+`cargo test`, and `cargo clippy --all-targets -- -D warnings`. Report any manual
+visual or platform checks that were not performed.
