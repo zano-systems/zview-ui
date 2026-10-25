@@ -40,8 +40,18 @@ Heap detail without overwriting this fixture.
 
 ## Heap screen validation
 
-Use the map-preserving export described in
-[`README.md`](../../README.md#phase-9--heap-detail-and-fragmentation-map).
+From the repository root, with ZView and its Python dependencies installed,
+generate a map-preserving export:
+
+```sh
+mkdir -p local
+python export_recording.py \
+  --recording test-data/zview-bench-60s/capture.ndjson.gz \
+  --elf test-data/zview-bench-60s/zephyr.elf --duration 60 \
+  --output local/bench-with-maps.json
+cargo run -- local/bench-with-maps.json
+```
+
 Then open **Kernel objects → Heap → bench_heap**.
 
 This acquisition contains 421 distinct maps across 577 snapshots, with 2–130
