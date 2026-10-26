@@ -19,9 +19,10 @@ fn thread_rows_scroll_and_keyboard_reveals_selection_without_moving_the_page(
     cx.simulate_resize(size(px(1000.), px(680.)));
     cx.update(|window, cx| {
         app.update(cx, |app, cx| {
-            app.frames =
-                crate::model::parse(include_str!("../test-data/zview-bench-60s/session.json"))
-                    .unwrap();
+            app.frames = crate::model::parse(include_str!(
+                "../test-data/zview-bench-60s/session-with-heap-maps.json"
+            ))
+            .unwrap();
             app.frame = 0;
             app.sync_heaps(window, cx);
             app.table_focus.focus(window, cx);
@@ -249,7 +250,10 @@ fn complete_session(app: &Entity<ThreadsApp>, cx: &mut VisualTestContext) -> Vec
     use crate::{kernel_model::*, model::*};
     cx.update(|window, cx| {
         app.update(cx, |app, cx| {
-            app.frames = parse(include_str!("../test-data/zview-bench-60s/session.json")).unwrap();
+            app.frames = parse(include_str!(
+                "../test-data/zview-bench-60s/session-with-heap-maps.json"
+            ))
+            .unwrap();
             app.frame = 288;
             let frame = &mut app.frames[app.frame];
             let waiters = Some(

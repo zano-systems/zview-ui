@@ -1,11 +1,11 @@
 set positional-arguments
 
-# Run the native UI with a decoded JSON document, or the bundled sample.
-ui file="":
+# Run the native UI with the official full-data test session, or another JSON.
+ui file="test-data/zview-bench-60s/session-with-heap-maps.json":
     if [ -n "$1" ]; then cargo run -- "$1"; else cargo run; fi
 
-# Build and open the browser UI. Ctrl+C stops the local-only server.
-web-ui file="":
+# Open the browser UI with the official test session. Ctrl+C stops the server.
+web-ui file="test-data/zview-bench-60s/session-with-heap-maps.json":
     python3 scripts/web_ui.py serve "$1"
 
 # Generate a standalone static site in target/web (no user data included).

@@ -89,13 +89,20 @@ jobs:
       - name: Test recording exporter
         run: python -m unittest discover -s . -p test_export_recording.py -v
 
-      - name: Generate heap-map integration fixture
+      - name: Verify official full-data fixture matches the recording
         run: |
           mkdir -p local
           python export_recording.py \
             --recording test-data/zview-bench-60s/capture.ndjson.gz \
             --elf test-data/zview-bench-60s/zephyr.elf --duration 60 \
             --output local/bench-with-maps.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          expected = json.loads(Path("test-data/zview-bench-60s/session-with-heap-maps.json").read_text())
+          actual = json.loads(Path("local/bench-with-maps.json").read_text())
+          assert actual == expected, "Official full-data fixture differs from the pinned recording export"
+          PY
 
       - name: Run Rust tests including opt-in integration tests
         run: cargo test --locked -- --include-ignored
