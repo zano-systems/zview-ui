@@ -338,8 +338,10 @@ mod tests {
 
     #[test]
     fn real_benchmark_capture_retains_work_items_and_all_object_groups() {
-        let frames =
-            model::parse(include_str!("../test-data/zview-bench-60s/session.json")).unwrap();
+        let frames = model::parse(include_str!(
+            "../test-data/zview-bench-60s/session-with-heap-maps.json"
+        ))
+        .unwrap();
         assert_eq!(frames.len(), 577);
         let queue = frames[0]
             .workqs

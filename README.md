@@ -43,17 +43,23 @@ just web-setup
 just web-ui
 ```
 
-Both launch commands start with the bundled small sample. Pass another decoded
-JSON file explicitly:
+Both launch commands default to the official
+[`session-with-heap-maps.json`](test-data/zview-bench-60s/session-with-heap-maps.json):
+577 snapshots over approximately 60 seconds, all object groups, and 421 distinct
+heap maps. Open **Kernel objects → Heap → bench_heap** to inspect fragmentation.
+See the [benchmark guide](test-data/zview-bench-60s/README.md) for provenance,
+regeneration, and checksums.
+
+Pass another decoded JSON file explicitly, or `""` for the bundled small sample:
 
 ```sh
 just ui file.json
 just web-ui "path with spaces/file.json"
+just web-ui ""
 ```
 
-See the [benchmark guide](test-data/zview-bench-60s/README.md) for the full real
-acquisition and map-preserving export instructions. Native typography is
-unchanged; the browser bundles IBM Plex Sans and JetBrains Mono.
+Bare `cargo run` also uses the small sample. Native typography is unchanged;
+the browser bundles IBM Plex Sans and JetBrains Mono.
 
 ### Browser behavior and static hosting
 
@@ -79,8 +85,8 @@ just web-build
 
 Serve `target/web/`, including `pkg/` and `fonts/`, over HTTP(S), not `file://`.
 Keep `fonts/OFL.txt` with the distribution. Static output contains no selected
-user JSON and starts with the small sample; choose **Open dump…** to load
-another file.
+user JSON and starts with the small sample; choose **Open dump…** to load the
+official test session or another file.
 
 ## Validation
 
@@ -94,10 +100,11 @@ cargo +nightly clippy --locked --lib --target wasm32-unknown-unknown -- -D warni
 just web-build
 ```
 
+The full-data heap-map test runs in the normal Rust suite without Python.
 For recording-import integration tests, install the pinned ZView backend and
 dependencies from [CI](.github/workflows/ci.yml), set `ZVIEW_PYTHON` to that
-interpreter, generate the heap-map export described in the benchmark guide,
-and run `cargo test --locked -- --include-ignored`.
+interpreter, and run `cargo test --locked -- --include-ignored`. CI also
+regenerates the official fixture and compares it with the committed JSON.
 
 Builds and headless tests do not replace browser/native visual checks. Inspect
 file-error recovery, navigation, playback, heap maps, zoom, and resizing.

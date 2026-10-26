@@ -38,10 +38,9 @@ fn native_help_keeps_recording_import_and_reload_instructions() {
     assert!(text.contains("Heap maps show captured chunks"));
 }
 
-/// This integration check deliberately requires the full, regenerated capture
+/// This integration check deliberately requires the official full capture
 /// rather than silently falling back to a synthetic or map-less document.
 #[gpui_kit::test]
-#[ignore = "First export local/bench-with-maps.json; see README.md"]
 fn recorded_heap_maps_render_and_play_from_the_full_benchmark(cx: &mut TestAppContext) {
     use super::{kernel_model::Kind, model};
     use std::{collections::HashSet, time::Duration};
@@ -52,10 +51,9 @@ fn recorded_heap_maps_render_and_play_from_the_full_benchmark(cx: &mut TestAppCo
         Box::leak(value.into_boxed_str())
     }
 
-    let path =
-        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("local/bench-with-maps.json");
-    let frames =
-        model::load(&path).expect("Export the benchmark with maps before running this test");
+    let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("test-data/zview-bench-60s/session-with-heap-maps.json");
+    let frames = model::load(&path).expect("valid committed full-data benchmark");
     assert_eq!(frames.len(), 577);
     let maps = frames.iter().map(|f| f.heaps[0].chunks.as_ref().unwrap());
     assert_eq!(maps.clone().map(|c| c.len()).min(), Some(2),);
@@ -589,7 +587,7 @@ fn every_chart_supports_independent_wheel_zoom_and_fit(cx: &mut TestAppContext) 
         app.update(cx, |app, cx| {
             app.load(
                 std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("test-data/zview-bench-60s/session.json"),
+                    .join("test-data/zview-bench-60s/session-with-heap-maps.json"),
                 window,
                 cx,
             );
@@ -731,7 +729,7 @@ fn real_capture_playback_matches_acquisition_timestamps(cx: &mut TestAppContext)
         app.update(cx, |app, cx| {
             app.load(
                 std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("test-data/zview-bench-60s/session.json"),
+                    .join("test-data/zview-bench-60s/session-with-heap-maps.json"),
                 window,
                 cx,
             );

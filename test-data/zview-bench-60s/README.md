@@ -3,13 +3,26 @@
 Real execution of [zview-bench](https://github.com/wkhadgar/zview-bench) in
 dynamic mode, not synthetic readings. Captured on 2026-10-19.
 
-## Open in the desktop app
+## Official UI test dataset
 
-From the zview-ui repository root:
+`session-with-heap-maps.json` is the official full-data fixture for native and
+browser UI testing. It is already decoded, includes all object groups and
+captured heap chunk maps, and needs no Python backend to open.
+From the zview-ui repository root, both recipes default to this file:
 
 ```sh
-cargo run -- test-data/zview-bench-60s/session.json
+just ui
+just web-ui
 ```
+
+Without `just`, pass the file explicitly:
+
+```sh
+cargo run -- test-data/zview-bench-60s/session-with-heap-maps.json
+```
+
+Open **Kernel objects → Heap → bench_heap** for the fragmentation map, heap
+statistics, waiting threads, and time history.
 
 Open **Kernel objects → Work queue → bench_workq**. Pending work includes
 `tick_work (work_handler)` and `trail_work (work_handler)`; observed backlog
@@ -23,8 +36,11 @@ use the synthetic work queue fixture to exercise nonempty drain queues.
 
 - `capture.ndjson.gz`: original memory-read recording; 578 polling frames.
 - `zephyr.elf`: exact matching firmware, required to decode/replay the recording.
-- `session.json`: desktop-ready dump sequence; 577 usable frames, spanning
-  0–59.905303 seconds after the runtime baseline frame.
+- `session-with-heap-maps.json`: official UI test session; 577 usable frames,
+  spanning 0–59.905303 seconds, with a heap chunk map in every frame. Size:
+  5,734,942 bytes, below the UI's 16 MiB document limit.
+- `session.json`: preserved legacy export of the same capture, without heap
+  chunk maps. Its original bytes and checksum remain unchanged.
 
 The recording command was bounded at 60 seconds with a requested 100 ms
 polling period. Actual capture intervals vary; the final sample need not land
@@ -33,33 +49,24 @@ evidence. GDB briefly halts the target for memory reads.
 
 Each decoded frame includes 18 threads (including idle), one heap, two
 semaphores, one mutex, one message queue, one memory slab, and two work queues.
-This preserved JSON predates heap-map retention and omits chunk maps. They
-remain in the raw recording. The current exporter retains them; export to a
-different path (for example `local/bench-with-maps.json`) to inspect
-Heap detail without overwriting this fixture.
+The official fixture was regenerated from the preserved recording and matching
+ELF using ZView backend revision `40c85a79ab88491e4050e84e03d94b6790c1dca6`
+(version 0.24.1), matching the backend pin in CI. Its snapshot timestamps match
+the legacy export exactly.
 
 ## Heap screen validation
 
-From the repository root, with ZView and its Python dependencies installed,
-generate a map-preserving export:
-
-```sh
-mkdir -p local
-python export_recording.py \
-  --recording test-data/zview-bench-60s/capture.ndjson.gz \
-  --elf test-data/zview-bench-60s/zephyr.elf --duration 60 \
-  --output local/bench-with-maps.json
-cargo run -- local/bench-with-maps.json
-```
-
-Then open **Kernel objects → Heap → bench_heap**.
+Open the official fixture using either command above, then choose
+**Kernel objects → Heap → bench_heap**. The full-benchmark heap rendering and
+playback test runs with `cargo test`; it needs no local export or Python setup.
 
 This acquisition contains 421 distinct maps across 577 snapshots, with 2–130
 chunks and up to about 97.7% map fragmentation. The midpoint shows 119 chunks
 with 720 allocated bytes and 852 free bytes. Payload statistics and map totals
 use different accounting because chunk sizes include allocator overhead.
 
-The preserved `session.json` above remains unchanged, including its checksum.
+The existing synthetic fixtures remain useful for edge cases not exercised by
+this real acquisition.
 
 ## Provenance
 
@@ -89,11 +96,22 @@ python -m zview.cli record \
   -e test-data/zview-bench-60s/zephyr.elf \
   -r gdb -t 127.0.0.1:12349 --period 0.1 --duration 60 \
   -o test-data/zview-bench-60s/capture.ndjson.gz
+```
+
+To reproduce the official JSON from the retained inputs, install the pinned
+backend revision and export to a scratch path rather than overwriting fixtures:
+
+```sh
+mkdir -p local
 python export_recording.py \
   --recording test-data/zview-bench-60s/capture.ndjson.gz \
   --elf test-data/zview-bench-60s/zephyr.elf --duration 60 \
-  --output test-data/zview-bench-60s/session.json
+  --output local/bench-with-maps.json
 ```
+
+CI regenerates this export and compares its decoded JSON with
+`session-with-heap-maps.json`. Deliberately review fixture updates when changing
+the capture, decoder revision, or exporter.
 
 Do not overwrite the preserved fixture when experimenting; use another output
 directory. Source/build downloads stay under Git-ignored `local/`.
@@ -103,5 +121,6 @@ directory. Source/build downloads stay under Git-ignored `local/`.
 ```text
 4d1f3e96ea7a526ff4492bef9c18cb826e5d4d6705c5a7150689496ef42c7b7e  capture.ndjson.gz
 31ef25d29dd1676d8311842fec0e9ce685afbda3970d9af846b652d8e4bed50a  session.json
+025420510e673a01a48b31330c27712ec25ac5b41e89c62f9d3a4841b17f27a2  session-with-heap-maps.json
 85932fc875cfa391635f8fa92b706ef82a08ec7824b473264ee73923aa9ed610  zephyr.elf
 ```

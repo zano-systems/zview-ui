@@ -725,8 +725,10 @@ mod tests {
 
     #[test]
     fn real_capture_distinguishes_saturated_and_idle_queues_independently_of_backlog() {
-        let frames =
-            model::parse(include_str!("../test-data/zview-bench-60s/session.json")).unwrap();
+        let frames = model::parse(include_str!(
+            "../test-data/zview-bench-60s/session-with-heap-maps.json"
+        ))
+        .unwrap();
         let queue = frames[0]
             .workqs
             .iter()
