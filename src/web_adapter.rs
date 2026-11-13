@@ -718,8 +718,6 @@ pub fn adapter_state() -> Result<String, JsValue> {
         });
         state["history_origin"] = json!(this.live_history.origin());
         state["history_view"] = json!(adapter.history_view);
-        state["window_seconds"] = json!(this.chart_window.seconds);
-        state["window_revision"] = json!(this.chart_window.revision);
         state["usage_window"] = json!(adapter.state.session.as_ref().and_then(|s| s.usage_window));
         state["requested_usage_window"] = json!(
             adapter
@@ -729,11 +727,6 @@ pub fn adapter_state() -> Result<String, JsValue> {
                 .and_then(|s| s.live_view.as_ref())
                 .map(|v| v.usage_window)
         );
-        let slider = this.window_slider.read(cx).bounds();
-        state["window_slider_bounds"] = json!({
-            "x": slider.left().as_f32(), "y": slider.top().as_f32(),
-            "width": slider.size.width.as_f32(), "height": slider.size.height.as_f32(),
-        });
         state["draft_advanced"] = json!(adapter.draft.advanced);
         state["view_loading"] = json!(this.live_view_loading(cx));
         state["view_error"] = json!(adapter.view_interest.error);

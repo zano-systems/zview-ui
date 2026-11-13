@@ -236,11 +236,8 @@ impl RenderOnce for TimeSeriesChart {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         self.series.compact_live();
         let state = crate::chart_zoom::state(self.id, window, cx);
-        if let Some(live) = &self.series.live {
-            state.update(cx, |zoom, _| zoom.sync_window(live.window));
-        }
         self.series.x_domain = state.read(cx).domain(&self.series);
-        let live = self.series.live.is_some();
+        let live = self.series.live.as_ref().map(|_| self.series.x_domain);
         crate::chart_zoom::wrap(self.id, state, PlotElement::new(self), live, window, cx)
     }
 }
@@ -545,7 +542,6 @@ mod tests {
         data.live = Some(crate::model::LiveSeries {
             ends: vec![1., 2., 3., 4., 4.],
             limited: false,
-            window: crate::live_window::Settings::default(),
         });
         data.compact_live();
         assert_eq!(

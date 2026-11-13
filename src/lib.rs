@@ -7,7 +7,6 @@ mod kernel_model;
 mod kernel_objects;
 mod layout;
 mod live_history;
-mod live_window;
 mod model;
 mod msgq_detail;
 mod mutex_detail;
@@ -44,7 +43,6 @@ use gpui_kit::component::{
         Sidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem,
         SidebarToggleButton,
     },
-    slider::{SliderEvent, SliderScale, SliderState},
     tooltip::Tooltip,
 };
 use gpui_kit::prelude::FluentBuilder;
@@ -203,10 +201,6 @@ struct ThreadsApp {
     frames: Vec<Frame>,
     frame: usize,
     live_history: live_history::History,
-    chart_window: live_window::Settings,
-    window_slider: Entity<SliderState>,
-    window_focus: FocusHandle,
-    _window_subscriptions: Vec<Subscription>,
     playing: bool,
     playback_task: Option<Task<()>>,
     playback_anchor: Option<(web_time::Instant, f64)>,
@@ -289,39 +283,9 @@ impl ThreadsApp {
             cx.subscribe_in(&object_search, window, |_, _, _: &InputEvent, _, cx| {
                 cx.notify()
             });
-        let window_slider = cx.new(|_| {
-            SliderState::new()
-                .min(live_window::MIN_SECONDS as f32)
-                .max(live_window::MAX_SECONDS as f32)
-                .step(1.)
-                .scale(SliderScale::Logarithmic)
-                .default_value(live_history::DEFAULT_WINDOW_SECONDS as f32)
-        });
-        let window_observation = cx.observe_in(&window_slider, window, |app, slider, _, cx| {
-            if app
-                .chart_window
-                .set(f64::from(slider.read(cx).value().end()))
-            {
-                cx.notify();
-            }
-        });
-        let window_release = cx.subscribe_in(
-            &window_slider,
-            window,
-            |app, _, event: &SliderEvent, _, cx| {
-                if matches!(event, SliderEvent::Release(_)) {
-                    app.chart_window.refresh();
-                    cx.notify();
-                }
-            },
-        );
         let mut app = Self {
             frame: 0,
             live_history: live_history::History::default(),
-            chart_window: live_window::Settings::default(),
-            window_slider,
-            window_focus: cx.focus_handle(),
-            _window_subscriptions: vec![window_observation, window_release],
             playing: false,
             playback_task: None,
             playback_anchor: None,
@@ -361,10 +325,7 @@ impl ThreadsApp {
     /// Live tables use the latest full frame; charts use compact per-object logs.
     fn history_frames(&self, key: live_history::Key) -> (std::borrow::Cow<'_, [Frame]>, usize) {
         if self.frames[self.frame].is_live {
-            let mut frames = self.live_history.frames(&key);
-            for frame in &mut frames {
-                frame.live_window = self.chart_window;
-            }
+            let frames = self.live_history.frames(&key);
             let current = frames.len() - 1;
             (std::borrow::Cow::Owned(frames), current)
         } else {
@@ -374,7 +335,7 @@ impl ThreadsApp {
 
     fn cpu_history(&self) -> model::ChartSeries {
         if self.frames[self.frame].is_live {
-            self.live_history.cpu().with_live_window(self.chart_window)
+            self.live_history.cpu()
         } else {
             model::chart_series(&self.frames, self.frame, Frame::cpu)
         }
@@ -382,9 +343,7 @@ impl ThreadsApp {
 
     fn stack_history(&self) -> model::ChartSeries {
         if self.frames[self.frame].is_live {
-            self.live_history
-                .stacks()
-                .with_live_window(self.chart_window)
+            self.live_history.stacks()
         } else {
             model::chart_series(&self.frames, self.frame, |f| {
                 f.stacks()
@@ -398,9 +357,7 @@ impl ThreadsApp {
             let (frames, current) = self.history_frames(live_history::Key::Heap(key.clone()));
             model::heap_usage_series(&frames, current, Some(key))
         } else if self.frames[self.frame].is_live {
-            self.live_history
-                .unknown()
-                .with_live_window(self.chart_window)
+            self.live_history.unknown()
         } else {
             model::heap_usage_series(&self.frames, self.frame, None)
         }
@@ -1687,7 +1644,7 @@ impl Render for ThreadsApp {
                             )))
                             .when(frame.is_live, |el| {
                                 let description = self.live_history.label();
-                                el.child(self.chart_window_controls(cx)).child(
+                                el.child(
                                     div().id("live-history-status").debug_selector(|| "live-history-status".into())
                                         .flex_shrink_0().whitespace_nowrap().text_xs()
                                         .tooltip(move |window, cx| Tooltip::new(description.clone()).build(window, cx))

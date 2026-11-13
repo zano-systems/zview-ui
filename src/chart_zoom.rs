@@ -11,17 +11,9 @@ use gpui_kit::*;
 pub(super) struct Zoom {
     factor: Option<f64>,
     live_seconds: Option<f64>,
-    window: crate::live_window::Settings,
 }
 
 impl Zoom {
-    pub fn sync_window(&mut self, window: crate::live_window::Settings) {
-        if self.window != window {
-            self.window = window;
-            self.live_seconds = None;
-        }
-    }
-
     fn scroll(&mut self, delta: f32) {
         let multiplier = (f64::from(delta).clamp(-200., 200.) * 0.01).exp();
         self.factor = Some((self.factor.unwrap_or(1.) * multiplier).clamp(1., 128.));
@@ -29,7 +21,9 @@ impl Zoom {
 
     pub fn domain(&self, series: &ChartSeries) -> (f64, f64) {
         if let Some(live) = &series.live {
-            let span = self.live_seconds.unwrap_or(live.window.seconds);
+            let span = self
+                .live_seconds
+                .unwrap_or(crate::live_history::DEFAULT_WINDOW_SECONDS);
             let span = if live.limited {
                 span.min((series.x_domain.1 - series.x_domain.0).max(0.1))
             } else {
@@ -54,10 +48,17 @@ impl Zoom {
     fn scroll_live(&mut self, delta: f32) {
         let multiplier = (f64::from(delta).clamp(-200., 200.) * 0.01).exp();
         self.live_seconds = Some(
-            (self.live_seconds.unwrap_or(self.window.seconds) / multiplier)
+            (self
+                .live_seconds
+                .unwrap_or(crate::live_history::DEFAULT_WINDOW_SECONDS)
+                / multiplier)
                 .clamp(0.1, crate::live_history::RETENTION_SECONDS),
         );
     }
+}
+
+fn live_duration(domain: (f64, f64)) -> String {
+    format!("{:.1}s · live", domain.1 - domain.0)
 }
 
 pub(super) fn state(id: &'static str, window: &mut Window, cx: &mut App) -> Entity<Zoom> {
@@ -70,17 +71,18 @@ pub(super) fn wrap(
     id: &'static str,
     state: Entity<Zoom>,
     plot: impl IntoElement,
-    live: bool,
+    live: Option<(f64, f64)>,
     window: &mut Window,
     cx: &mut App,
 ) -> impl IntoElement {
     let view = window.current_view();
     let factor = state.read(cx).factor;
-    let seconds = state
-        .read(cx)
-        .live_seconds
-        .unwrap_or(state.read(cx).window.seconds);
-    let base_seconds = state.read(cx).window.seconds;
+    let zoomed = if live.is_some() {
+        state.read(cx).live_seconds.is_some()
+    } else {
+        factor.is_some()
+    };
+    let base_seconds = crate::live_history::DEFAULT_WINDOW_SECONDS;
     let reset = state.clone();
     let follow = state.clone();
     div()
@@ -94,7 +96,7 @@ pub(super) fn wrap(
             let delta = event.delta.pixel_delta(window.line_height()).y.as_f32();
             if delta != 0. {
                 state.update(cx, |state, _| {
-                    if live { state.scroll_live(delta); } else { state.scroll(delta); }
+                    if live.is_some() { state.scroll_live(delta); } else { state.scroll(delta); }
                 });
                 cx.stop_propagation();
                 cx.notify(view);
@@ -112,7 +114,7 @@ pub(super) fn wrap(
                         .debug_selector(move || {
                             format!(
                                 "{id}-{}",
-                                if factor.is_some() {
+                                if zoomed {
                                     "zoomed"
                                 } else {
                                     "unzoomed"
@@ -122,23 +124,24 @@ pub(super) fn wrap(
                         .text_xs()
                         .text_color(rgb(crate::MUTED))
                         .child(
-                            if live {
-                                format!("{seconds:.1}s · live")
+                            if let Some(domain) = live {
+                                live_duration(domain)
                             } else {
                                 factor.map(|factor| format!("{factor:.1}× · trailing"))
                                     .unwrap_or_else(|| "Scroll to zoom".into())
                             },
                         ),
                 )
-                .when(live, |el| el.child(
+                .when(live.is_some(), |el| el.child(
+                    div().debug_selector(move || format!("{id}-reset-live")).child(
                     Button::new(SharedString::from(format!("{id}-follow-live")))
-                        .small().ghost().label(format!("Last {base_seconds:.0}s"))
-                        .tooltip(format!("Follow the selected {base_seconds:.0}-second window. Dense traces use pixel min/max envelopes; hover reads exact observations."))
-                        .accessibility_label(format!("Follow live with the selected {base_seconds:.0}-second window"))
+                        .small().ghost().label(format!("Reset {base_seconds:.0}s"))
+                        .tooltip(format!("Reset this chart to the default {base_seconds:.0}-second window. Scroll to zoom; the duration at left is the visible time span."))
+                        .accessibility_label(format!("Reset live chart to {base_seconds:.0} seconds"))
                         .on_click(move |_, _, cx| {
                             follow.update(cx, |state, _| state.live_seconds = None);
                             cx.notify(view);
-                        }),
+                        })),
                 ))
                 .child(
                     div()
@@ -148,7 +151,7 @@ pub(super) fn wrap(
                                 .small()
                                 .ghost()
                                 .icon(IconName::Maximize)
-                                .tooltip(if live { "Fit retained history (up to 5 minutes). Dense traces show pixel min/max envelopes." } else { "Fit history" })
+                                .tooltip(if live.is_some() { "Fit retained history (up to 5 minutes). Dense traces show pixel min/max envelopes." } else { "Fit history" })
                                 .accessibility_label("Fit history")
                                 .on_click(move |_, _, cx| {
                                     reset.update(cx, |state, _| {
@@ -165,7 +168,7 @@ pub(super) fn wrap(
 
 #[cfg(test)]
 mod tests {
-    use super::Zoom;
+    use super::{Zoom, live_duration};
     use crate::model::{ChartPoint, ChartSeries};
     #[test]
     fn domain_pins_current_time_and_bounds_zoom_without_mutating_source() {
@@ -241,7 +244,6 @@ mod tests {
             live: Some(crate::model::LiveSeries {
                 ends: vec![400.],
                 limited: false,
-                window: crate::live_window::Settings::default(),
             }),
         };
         let mut zoom = Zoom::default();
@@ -274,7 +276,6 @@ mod tests {
             live: Some(crate::model::LiveSeries {
                 ends: vec![3.],
                 limited: false,
-                window: crate::live_window::Settings::default(),
             }),
         };
         let zoom = Zoom::default();
@@ -284,34 +285,38 @@ mod tests {
     }
 
     #[test]
-    fn changing_the_shared_window_resets_per_chart_zoom_without_changing_data() {
-        let mut settings = crate::live_window::Settings::default();
+    fn live_duration_matches_the_actual_plot_after_wheel_fit_and_reset() {
         let mut series = ChartSeries {
             points: vec![ChartPoint {
                 x: 0.,
                 value: Some(1.),
             }],
-            x_domain: (0., 100.),
+            x_domain: (0., 3.),
             timed: true,
             caption: String::new(),
             playhead: None,
             live: Some(crate::model::LiveSeries {
-                ends: vec![100.],
+                ends: vec![3.],
                 limited: false,
-                window: settings,
             }),
         };
         let mut zoom = Zoom::default();
-        zoom.scroll_live(100.);
-        assert!(zoom.domain(&series).0 > 80.);
-        settings.set(5.);
-        series.live.as_mut().unwrap().window = settings;
-        zoom.sync_window(settings);
-        assert_eq!(zoom.domain(&series), (95., 100.));
+        assert_eq!(live_duration(zoom.domain(&series)), "3.0s · live");
+        series.x_domain = (156.8, 237.1);
+        assert_eq!(live_duration(zoom.domain(&series)), "20.0s · live");
+        zoom.scroll_live(-140.);
+        assert_eq!(live_duration(zoom.domain(&series)), "80.3s · live");
+        zoom.scroll_live(200.);
+        let domain = zoom.domain(&series);
+        assert_eq!(
+            live_duration(domain),
+            format!("{:.1}s · live", domain.1 - domain.0)
+        );
+        assert!(domain.1 - domain.0 < 20.);
+        zoom.live_seconds = Some(crate::live_history::RETENTION_SECONDS);
+        assert_eq!(live_duration(zoom.domain(&series)), "80.3s · live");
+        zoom.live_seconds = None;
+        assert_eq!(live_duration(zoom.domain(&series)), "20.0s · live");
         assert_eq!(series.points.len(), 1);
-        settings.set(120.);
-        series.live.as_mut().unwrap().window = settings;
-        zoom.sync_window(settings);
-        assert_eq!(zoom.domain(&series), (0., 100.));
     }
 }

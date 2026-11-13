@@ -257,13 +257,10 @@ impl StepAreaChart {
 impl RenderOnce for StepAreaChart {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = crate::chart_zoom::state(self.id, window, cx);
-        if let Some(live) = &self.tokens.live {
-            state.update(cx, |zoom, _| zoom.sync_window(live.window));
-        }
         let domain = state.read(cx).domain(&self.tokens);
         self.tokens.x_domain = domain;
         self.waiters.x_domain = domain;
-        let live = self.tokens.live.is_some();
+        let live = self.tokens.live.as_ref().map(|_| domain);
         crate::chart_zoom::wrap(self.id, state, PlotElement::new(self), live, window, cx)
     }
 }
