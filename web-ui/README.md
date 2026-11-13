@@ -183,6 +183,8 @@ and static-JSON workflows remain separate and unchanged.
    Last received measurements remain labelled as retained data. **Reconnect**
    explicitly creates a new Target/Core, re-resolves the saved requested build
    configuration, and starts fresh baselines/history with a new session ID.
+   It returns to the Threads overview; an open detail view and its chart history
+   are not resumed. CPU averaging is preserved separately.
    If the build changed, the newly resolved board/ELF/settings are shown.
 
 By default polling requests one frame every 100 ms (10/s), but reads may take longer.
@@ -317,6 +319,9 @@ Selection and optional heap detail are changed together between bounded polls:
 One initial full sample supplies object names/addresses for navigation and heap
 choices. It is not repeated on every screen change. Sidebar counts describe
 that inventory, not freshly polled counts of every object type.
+Inventory is not refreshed during an active session: threads or kernel objects
+created after connection are not newly discovered or selectable. Disconnect and
+Reconnect to discover them; periodic runtime discovery is a follow-up.
 
 Frames include `view`, `view_revision`, and `sampled_groups`. Old in-flight frames
 are rejected after a view change. Until a matching sample arrives, the new screen
@@ -329,6 +334,9 @@ stream, but cannot change acquisition until the controlling tab closes. There
 is no union of tab selections and no extra poller. Closing a tab removes map
 demand; ordinary acquisition retains its last selection until another controller
 chooses a view or the session is stopped.
+After an ownership conflict, the waiting browser retries when the owner releases
+control, even if the retained selection belongs to a different screen. The last
+selection is not itself evidence that a controller is still connected.
 
 Replay is unchanged: navigation never changes its recorded read sequence.
 

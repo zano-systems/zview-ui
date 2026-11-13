@@ -74,6 +74,14 @@ pub struct LiveViewState {
     pub usage_window: u32,
 }
 
+impl LiveViewState {
+    /// Release retains the last selection, but that selection no longer blocks
+    /// another tab's retry, even when it wants a different screen.
+    pub fn active_view(&self) -> Option<&LiveView> {
+        self.owner.as_ref().map(|_| &self.view)
+    }
+}
+
 fn default_usage_window() -> u32 {
     16
 }
@@ -1241,6 +1249,65 @@ mod tests {
             .unwrap();
         interest.finish(joining, Some("Invalid request".into()), false);
         assert!(interest.begin(Some(requested), None).is_none());
+    }
+
+    #[test]
+    fn view_conflicts_retry_after_owner_release_regardless_of_the_retained_screen() {
+        let desired = LiveView::Overview { heap: None };
+        for release_before_reply in [false, true] {
+            let mut state = LiveViewState {
+                revision: 4,
+                owner: Some("winner".into()),
+                view: LiveView::Objects {
+                    kind: None,
+                    query: String::new(),
+                },
+                usage_window: 16,
+            };
+            let mut interest = ViewInterest::default();
+            interest.bind(Some("live"));
+            let attempt = interest.begin(Some(desired.clone()), None).unwrap();
+            if release_before_reply {
+                state.owner = None;
+                // No concurrent retry while the original HTTP request is pending.
+                assert!(
+                    interest
+                        .begin(Some(desired.clone()), state.active_view())
+                        .is_none()
+                );
+            }
+            interest.finish(
+                attempt,
+                Some("Only one tab controls Live acquisition.".into()),
+                true,
+            );
+            if !release_before_reply {
+                assert!(
+                    interest
+                        .begin(Some(desired.clone()), state.active_view())
+                        .is_none()
+                );
+                state.owner = None;
+            }
+            assert_ne!(state.view, desired); // The server keeps the winner's screen.
+            let retry = interest
+                .begin(Some(desired.clone()), state.active_view())
+                .unwrap();
+            assert!(interest.error.is_none());
+            assert!(
+                interest
+                    .begin(Some(desired.clone()), state.active_view())
+                    .is_none()
+            );
+            state.owner = Some("waiting-tab".into());
+            state.view = desired.clone();
+            interest.finish(retry, None, false);
+            assert!(
+                interest
+                    .begin(Some(desired.clone()), state.active_view())
+                    .is_none()
+            );
+        }
     }
 
     #[test]

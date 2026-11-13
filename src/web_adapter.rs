@@ -257,7 +257,10 @@ impl ThreadsApp {
         let view = self.desired_live_view(cx);
         let Some(epoch) = self.adapter.view_interest.begin(
             Some(view.clone()),
-            session.live_view.as_ref().map(|state| &state.view),
+            session
+                .live_view
+                .as_ref()
+                .and_then(|state| state.active_view()),
         ) else {
             return;
         };
@@ -733,6 +736,7 @@ pub fn adapter_state() -> Result<String, JsValue> {
         });
         state["draft_advanced"] = json!(adapter.draft.advanced);
         state["view_loading"] = json!(this.live_view_loading(cx));
+        state["view_error"] = json!(adapter.view_interest.error);
         state["requested_view"] = json!(this.desired_live_view(cx));
         state["sampled_view"] = json!(
             adapter
