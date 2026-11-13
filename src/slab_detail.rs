@@ -51,6 +51,7 @@ impl ThreadsApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let slab = key.in_frame(&self.frames[self.frame]);
+        let (history, current) = self.history_frames(crate::live_history::Key::Slab(key.clone()));
         let waiters = slab.and_then(|slab| slab.object.waiters.as_deref());
         let exhausted = slab.is_some_and(|slab| {
             matches!((slab.num_used, slab.num_blocks), (Some(u), Some(n)) if n > 0 && u >= n)
@@ -62,7 +63,7 @@ impl ThreadsApp {
         } else {
             GREEN
         };
-        let (series, maximum) = usage_history(&self.frames, self.frame, key);
+        let (series, maximum) = usage_history(&history, current, key);
         let series = series.with_playhead(self.playback_time(cx));
         let caption = series.caption.clone();
         let scale = match slab.and_then(|slab| slab.num_blocks) {

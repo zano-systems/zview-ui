@@ -121,6 +121,7 @@ fn chart_card(chart: StepAreaChart, caption: String) -> impl IntoElement {
 impl ThreadsApp {
     pub(super) fn mutex_detail(&self, key: &MutexKey, cx: &mut Context<Self>) -> impl IntoElement {
         let mutex = key.in_frame(&self.frames[self.frame]);
+        let (frames, current) = self.history_frames(crate::live_history::Key::Mutex(key.clone()));
         let waiters = mutex.and_then(|m| m.object.waiters.as_deref());
         let state = mutex.map_or(MutexState::Unknown, |m| m.state());
         let status = if mutex.is_some_and(|m| m.owner_address.is_some_and(|a| a != 0))
@@ -130,13 +131,13 @@ impl ThreadsApp {
         } else {
             state_label(state)
         };
-        let history = contention_history(&self.frames, self.frame, key);
-        let depth = depth_history(&self.frames, self.frame, key);
+        let history = contention_history(&frames, current, key);
+        let depth = depth_history(&frames, current, key);
         let caption = depth.caption.clone();
-        let waiting = model::chart_series(&self.frames, self.frame, |frame| {
+        let waiting = model::chart_series(&frames, current, |frame| {
             Some(key.in_frame(frame)?.object.waiters.as_ref()?.len() as f64)
         });
-        let owners = self.frames[..=self.frame]
+        let owners = frames[..=current]
             .iter()
             .map(|frame| key.in_frame(frame).and_then(|m| m.owner_address))
             .collect();
@@ -144,7 +145,7 @@ impl ThreadsApp {
             .into_iter()
             .enumerate()
             .map(|(i, state)| {
-                let mutex = key.in_frame(&self.frames[i]);
+                let mutex = key.in_frame(&frames[i]);
                 let owner = mutex.map(|m| m.owner_label()).unwrap_or_else(|| "—".into());
                 format!("{} · Owner: {owner}", state_label(state))
             })

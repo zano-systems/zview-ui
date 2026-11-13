@@ -10,8 +10,9 @@ use gpui_kit::component::{
 use gpui_kit::*;
 
 /// Kit owns layout, hover tracking, and the styled tooltip. A numeric x-axis
-/// avoids LineChart's evenly spaced categories. All readings use sample-and-hold
-/// steps: horizontal until the next capture, then vertical at its timestamp.
+/// avoids LineChart's evenly spaced categories. Counts retain sample-and-hold
+/// semantics. Live percentages connect actual observations with straight lines;
+/// the connecting geometry is not an additional measurement.
 #[derive(IntoElement)]
 pub(super) struct TimeSeriesChart {
     id: &'static str,
@@ -56,6 +57,32 @@ impl Geometry {
 }
 
 impl TimeSeriesChart {
+    fn live_lines(&self) -> bool {
+        self.series.live.is_some() && self.count_max.is_none()
+    }
+
+    fn trace_points(&self, index: usize, g: Geometry) -> Option<([Point<Pixels>; 3], usize)> {
+        let sample = self.series.points.get(index)?;
+        let end = self.series.interval_end(index)?;
+        let a = g.point(sample, self.series.x_domain)?;
+        let b = self
+            .series
+            .points
+            .get(index + 1)
+            .filter(|next| next.x <= end)
+            .and_then(|next| g.point(next, self.series.x_domain));
+        if self.live_lines()
+            && let Some(b) = b
+        {
+            return Some(([a, b, b], 2));
+        }
+        let held = point(g.x(end, self.series.x_domain), a.y);
+        Some((
+            [a, held, b.unwrap_or(held)],
+            if b.is_some() { 3 } else { 2 },
+        ))
+    }
+
     pub fn new(id: &'static str, series: ChartSeries, color: Hsla) -> Self {
         Self {
             id,
@@ -128,10 +155,15 @@ impl TimeSeriesChart {
         if !x.is_finite() || x > self.series.view_end()? {
             return None;
         }
-        self.series
+        let index = self
+            .series
             .points
             .partition_point(|p| p.x <= x)
-            .checked_sub(1)
+            .checked_sub(1)?;
+        if self.series.live.is_some() && x > self.series.interval_end(index)? {
+            return None;
+        }
+        Some(index)
     }
 
     fn geometry(&self, size: Size<Pixels>) -> Geometry {
@@ -142,6 +174,32 @@ impl TimeSeriesChart {
     }
 
     fn unknown_bands(&self, geometry: Geometry) -> Vec<Bounds<Pixels>> {
+        if let Some(buckets) = self.series.envelopes(geometry.width.ceil() as usize) {
+            let (start, end) = self.series.x_domain;
+            let confirmed = self.series.view_end().unwrap_or(start);
+            let count = buckets.len() as f64;
+            return buckets
+                .iter()
+                .enumerate()
+                .filter_map(|(i, bucket)| {
+                    if bucket.as_ref().is_some_and(|b| !b.has_gap) {
+                        return None;
+                    }
+                    let a = start + i as f64 / count * (end - start);
+                    let b = (start + (i + 1) as f64 / count * (end - start)).min(confirmed);
+                    (b > a).then(|| {
+                        Bounds::new(
+                            point(geometry.x(a, self.series.x_domain), px(geometry.top)),
+                            size(
+                                geometry.x(b, self.series.x_domain)
+                                    - geometry.x(a, self.series.x_domain),
+                                px(geometry.height),
+                            ),
+                        )
+                    })
+                })
+                .collect();
+        }
         self.unknown_ranges()
             .into_iter()
             .map(|(start, end)| {
@@ -176,9 +234,14 @@ impl TimeSeriesChart {
 
 impl RenderOnce for TimeSeriesChart {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        self.series.compact_live();
         let state = crate::chart_zoom::state(self.id, window, cx);
+        if let Some(live) = &self.series.live {
+            state.update(cx, |zoom, _| zoom.sync_window(live.window));
+        }
         self.series.x_domain = state.read(cx).domain(&self.series);
-        crate::chart_zoom::wrap(self.id, state, PlotElement::new(self), window, cx)
+        let live = self.series.live.is_some();
+        crate::chart_zoom::wrap(self.id, state, PlotElement::new(self), live, window, cx)
     }
 }
 
@@ -211,25 +274,48 @@ impl Plot for TimeSeriesChart {
                 ),
             }),
             |window| {
-                for index in self.series.visible_range() {
-                    let sample = &self.series.points[index];
-                    let Some(end_time) = self.series.interval_end(index) else {
+                let envelopes = if self.live_lines() {
+                    self.series.line_envelopes(geometry.width.ceil() as usize)
+                } else {
+                    self.series.envelopes(geometry.width.ceil() as usize)
+                };
+                if let Some(buckets) = &envelopes {
+                    for bucket in buckets.iter().flatten() {
+                        let left = geometry.x(bucket.start, self.series.x_domain);
+                        let right = geometry.x(bucket.end, self.series.x_domain);
+                        let y = |value| {
+                            geometry
+                                .point(
+                                    &ChartPoint {
+                                        x: bucket.start,
+                                        value: Some(value),
+                                    },
+                                    self.series.x_domain,
+                                )
+                                .unwrap()
+                                .y
+                        };
+                        let top = y(bucket.maximum);
+                        let bottom = y(bucket.minimum);
+                        let mut path = PathBuilder::stroke(px(2.));
+                        path.move_to(bounds.origin + point(left, top));
+                        path.line_to(bounds.origin + point(left, bottom));
+                        if !bucket.has_gap && bucket.minimum == bucket.maximum {
+                            path.line_to(bounds.origin + point(right, bottom));
+                        }
+                        if let Ok(path) = path.build() {
+                            window.paint_path(path, self.color);
+                        }
+                    }
+                }
+                for index in self.series.visible_range().filter(|_| envelopes.is_none()) {
+                    let Some((points, count)) = self.trace_points(index, geometry) else {
                         continue;
                     };
-                    let Some(a) = geometry.point(sample, self.series.x_domain) else {
-                        continue;
-                    };
-                    let end = geometry.x(end_time, self.series.x_domain);
                     let mut path = PathBuilder::stroke(px(2.));
-                    path.move_to(bounds.origin + a);
-                    path.line_to(bounds.origin + point(end, a.y));
-                    if let Some(b) = self
-                        .series
-                        .points
-                        .get(index + 1)
-                        .and_then(|p| geometry.point(p, self.series.x_domain))
-                    {
-                        path.line_to(bounds.origin + b);
+                    path.move_to(bounds.origin + points[0]);
+                    for p in &points[1..count] {
+                        path.line_to(bounds.origin + *p);
                     }
                     if let Ok(path) = path.build() {
                         window.paint_path(path, self.color);
@@ -237,7 +323,26 @@ impl Plot for TimeSeriesChart {
                 }
                 // Retain visible single snapshots/isolated readings without
                 // inventing a duration for them.
-                if self.show_dots {
+                if self.show_dots && envelopes.is_none() && self.series.live.is_some() {
+                    for index in self.series.visible_range() {
+                        let sample = self.series.points[index];
+                        if self.series.interval_end(index) != Some(sample.x) {
+                            continue;
+                        }
+                        if let Some(position) = geometry.point(&sample, self.series.x_domain) {
+                            window.paint_quad(
+                                fill(
+                                    Bounds::new(
+                                        bounds.origin + position - point(px(2.), px(2.)),
+                                        size(px(4.), px(4.)),
+                                    ),
+                                    self.color,
+                                )
+                                .corner_radii(px(2.)),
+                            );
+                        }
+                    }
+                } else if self.show_dots && self.series.live.is_none() {
                     for segment in self.series.segments() {
                         if let [sample] = segment {
                             let position = bounds.origin
@@ -355,7 +460,11 @@ impl Plot for TimeSeriesChart {
             None if self.shade_unknown_counts => "Unknown count".into(),
             None => return None,
         };
-        let time = self.series.source_label(sample.x);
+        let time = if self.series.live.is_some() {
+            format!("Observed at {:.3}s since opening this view", sample.x)
+        } else {
+            self.series.source_label(sample.x)
+        };
         let geometry = self.geometry(bounds.size);
         let dot = self.hover_position(state.index, geometry)?;
         let width = (measure_text_width(&time.clone().into(), px(12.), window) + 48.)
@@ -407,6 +516,60 @@ mod tests {
     use gpui_kit::component::plot::Plot;
     use gpui_kit::{Bounds, TestAppContext, point, px, rgb, size};
 
+    #[test]
+    fn live_percentages_connect_actual_samples_while_counts_keep_steps() {
+        let mut data = series();
+        data.points = vec![
+            ChartPoint {
+                x: 0.,
+                value: Some(0.),
+            },
+            ChartPoint {
+                x: 1.,
+                value: Some(0.),
+            },
+            ChartPoint {
+                x: 2.,
+                value: Some(0.),
+            },
+            ChartPoint {
+                x: 3.,
+                value: Some(80.),
+            },
+            ChartPoint {
+                x: 4.,
+                value: Some(80.),
+            },
+        ];
+        data.x_domain = (0., 4.);
+        data.live = Some(crate::model::LiveSeries {
+            ends: vec![1., 2., 3., 4., 4.],
+            limited: false,
+            window: crate::live_window::Settings::default(),
+        });
+        data.compact_live();
+        assert_eq!(
+            data.points.iter().map(|p| p.x).collect::<Vec<_>>(),
+            vec![0., 2., 3., 4.]
+        );
+        let chart = TimeSeriesChart::new("line", data, rgb(0xffffff).into());
+        let g = chart.geometry(size(px(320.), px(160.)));
+        let (points, count) = chart.trace_points(1, g).unwrap();
+        assert_eq!(count, 2);
+        assert!(points[1].x > points[0].x && points[1].y < points[0].y);
+        let mut counts = TimeSeriesChart::count("counts", chart.series, rgb(0xffffff).into(), 100.);
+        let (points, count) = counts.trace_points(1, g).unwrap();
+        assert_eq!(count, 3);
+        assert_eq!(points[1].y, points[0].y);
+        assert_eq!(points[1].x, points[2].x);
+        // Neither representation may join across an interruption.
+        counts.count_max = None;
+        counts.series.live.as_mut().unwrap().ends[1] = 2.;
+        let (points, count) = counts.trace_points(1, g).unwrap();
+        assert_eq!(count, 2);
+        assert_eq!(points[0], points[1]);
+    }
+
     fn series() -> ChartSeries {
         ChartSeries {
             points: vec![
@@ -432,6 +595,7 @@ mod tests {
             timed: true,
             caption: String::new(),
             playhead: None,
+            live: None,
         }
     }
 

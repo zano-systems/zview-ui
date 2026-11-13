@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 #[cfg(not(target_family = "wasm"))]
 use std::{fs, path::Path};
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct Frame {
     pub threads: Vec<Thread>,
     #[serde(default)]
@@ -22,9 +22,18 @@ pub struct Frame {
     /// Only the web live adapter sets this; live receipt time is not recorded time.
     #[serde(skip)]
     pub is_live: bool,
+    /// Chart-only coverage and retention; never decoded from source documents.
+    #[serde(skip)]
+    pub observation_end: Option<f64>,
+    #[serde(skip)]
+    pub history_window: Option<(f64, f64)>,
+    #[serde(skip)]
+    pub history_limited: bool,
+    #[serde(skip)]
+    pub live_window: crate::live_window::Settings,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Thread {
     pub address: u64,
     pub name: String,
@@ -99,7 +108,7 @@ impl Thread {
 }
 
 /// Do not join histories by display name, or across a known reuse of an address.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct ThreadKey {
     pub address: u64,
     pub name: String,
@@ -129,7 +138,7 @@ impl ThreadKey {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Runtime {
     pub cpu: Option<f64>,
     pub cpu_normalized: Option<f64>,
@@ -139,7 +148,7 @@ pub struct Runtime {
     pub stack_watermark_percent: Option<f64>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Heap {
     pub address: u64,
     pub name: String,
@@ -151,13 +160,13 @@ pub struct Heap {
 }
 
 /// The dump supplies address-ordered sizes, not absolute chunk addresses.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct HeapChunk {
     pub size: u64,
     pub used: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct HeapKey {
     pub address: u64,
     pub name: String,
@@ -259,9 +268,144 @@ pub struct ChartSeries {
     pub caption: String,
     /// View-only playback cursor; never a captured sample or a new reading.
     pub playhead: Option<f64>,
+    /// Live change points retain independent ends of confirmed observation.
+    pub live: Option<LiveSeries>,
+}
+
+#[derive(Clone, Debug)]
+pub struct LiveSeries {
+    pub ends: Vec<f64>,
+    pub limited: bool,
+    pub window: crate::live_window::Settings,
+}
+
+/// A display-only pixel envelope, never a replacement for retained observations.
+#[derive(Clone, Debug)]
+pub struct EnvelopeBucket {
+    pub start: f64,
+    pub end: f64,
+    pub minimum: f64,
+    pub maximum: f64,
+    pub has_gap: bool,
 }
 
 impl ChartSeries {
+    pub fn with_live_window(mut self, window: crate::live_window::Settings) -> Self {
+        if let Some(live) = &mut self.live {
+            live.window = window;
+        }
+        self
+    }
+
+    /// Compress scalar repetition after correlated source metadata has been used.
+    pub fn compact_live(&mut self) {
+        let Some(live) = &mut self.live else { return };
+        let mut points = Vec::<ChartPoint>::new();
+        let mut ends = Vec::<f64>::new();
+        let mut run_start = 0;
+        for (point, end) in self.points.iter().copied().zip(live.ends.iter().copied()) {
+            if let Some(last) = points.last()
+                && last.value == point.value
+                && ends.last().is_some_and(|until| *until >= point.x)
+            {
+                if points.len() - 1 == run_start {
+                    points.push(point);
+                    ends.push(end);
+                } else {
+                    *points.last_mut().unwrap() = point;
+                    *ends.last_mut().unwrap() = end;
+                }
+                ends[run_start] = point.x;
+            } else {
+                run_start = points.len();
+                points.push(point);
+                ends.push(end);
+            }
+        }
+        self.points = points;
+        live.ends = ends;
+    }
+
+    /// Dense Live traces use min/max envelopes per horizontal pixel. Unknown
+    /// intervals remain marked, and hover still queries the exact source series.
+    pub fn envelopes(&self, width: usize) -> Option<Vec<Option<EnvelopeBucket>>> {
+        self.display_envelopes(width, false)
+    }
+
+    pub fn line_envelopes(&self, width: usize) -> Option<Vec<Option<EnvelopeBucket>>> {
+        self.display_envelopes(width, true)
+    }
+
+    fn display_envelopes(&self, width: usize, linear: bool) -> Option<Vec<Option<EnvelopeBucket>>> {
+        let width = width.clamp(1, 8192);
+        if self.live.is_none() || self.visible_range().len() <= width * 2 {
+            return None;
+        }
+        let mut buckets = vec![None::<EnvelopeBucket>; width];
+        let mut gaps = vec![false; width];
+        let (start, end) = self.x_domain;
+        if end <= start {
+            return None;
+        }
+        let pixel =
+            |x: f64| (((x - start) / (end - start) * width as f64).floor() as usize).min(width - 1);
+        for i in self.visible_range() {
+            let point = self.points[i];
+            let a = point.x.max(start);
+            let b = self.interval_end(i).unwrap_or(point.x).min(end);
+            if b < a {
+                continue;
+            }
+            for column in pixel(a)..=pixel(b) {
+                let left = start + column as f64 / width as f64 * (end - start);
+                let right = start + (column + 1) as f64 / width as f64 * (end - start);
+                if let Some(value) = point.value {
+                    let value_at = |time| {
+                        if linear
+                            && let Some(next) = self.points.get(i + 1)
+                            && next.x <= self.interval_end(i).unwrap_or(point.x)
+                            && next.x > point.x
+                            && let Some(next_value) = next.value
+                        {
+                            value + (next_value - value) * (time - point.x) / (next.x - point.x)
+                        } else {
+                            value
+                        }
+                    };
+                    let left_value = value_at(a.max(left));
+                    let right_value = value_at(b.min(right));
+                    let bucket = buckets[column].get_or_insert(EnvelopeBucket {
+                        start: a.max(left),
+                        end: b.min(right),
+                        minimum: left_value.min(right_value),
+                        maximum: left_value.max(right_value),
+                        has_gap: false,
+                    });
+                    bucket.minimum = bucket.minimum.min(left_value).min(right_value);
+                    bucket.maximum = bucket.maximum.max(left_value).max(right_value);
+                    bucket.start = bucket.start.min(a.max(left));
+                    bucket.end = bucket.end.max(b.min(right));
+                } else {
+                    gaps[column] = true;
+                }
+            }
+            // A break in acquisition is different from a constant held reading.
+            if let Some(next) = self.points.get(i + 1)
+                && self.interval_end(i).is_some_and(|until| until < next.x)
+            {
+                for gap in &mut gaps[pixel(b.max(start))..=pixel(next.x.min(end))] {
+                    *gap = true;
+                }
+            }
+        }
+        for (bucket, gap) in buckets.iter_mut().zip(gaps) {
+            if let Some(bucket) = bucket {
+                bucket.has_gap = gap;
+            }
+        }
+        Some(buckets)
+    }
+
     /// Include the predecessor so a held interval entering the left edge remains
     /// visible. Keep original indices for metadata and source-reading tooltips.
     pub fn visible_range(&self) -> std::ops::Range<usize> {
@@ -279,11 +423,17 @@ impl ChartSeries {
     }
 
     pub fn view_end(&self) -> Option<f64> {
+        if let Some(live) = &self.live {
+            return live.ends.last().copied();
+        }
         self.playhead.or_else(|| self.points.last().map(|p| p.x))
     }
 
     pub fn interval_end(&self, index: usize) -> Option<f64> {
         let sample = self.points.get(index)?;
+        if let Some(live) = &self.live {
+            return live.ends.get(index).copied();
+        }
         self.points
             .get(index + 1)
             .map(|p| p.x)
@@ -309,7 +459,15 @@ impl ChartSeries {
             return point.value.map(|_| right);
         }
         let left = right.checked_sub(1)?;
-        if self.points.get(right).is_none() && self.playhead.is_none_or(|end| x > end) {
+        if let Some(live) = &self.live
+            && x > *live.ends.get(left)?
+        {
+            return None;
+        }
+        if self.points.get(right).is_none()
+            && self.playhead.is_none_or(|end| x > end)
+            && self.live.is_none()
+        {
             return None;
         }
         self.points[left].value.map(|_| left)
@@ -334,7 +492,7 @@ pub fn chart_series(
 ) -> ChartSeries {
     let timed = frames[current].elapsed_seconds.is_some();
     let x_domain = if timed {
-        (
+        frames[current].history_window.unwrap_or((
             if frames[current].is_live {
                 frames[0].elapsed_seconds.unwrap_or(0.).floor()
             } else {
@@ -346,7 +504,7 @@ pub fn chart_series(
                 .unwrap()
                 .ceil()
                 .max(1.),
-        )
+        ))
     } else {
         (1., (frames.len() as f64).max(2.))
     };
@@ -363,10 +521,31 @@ pub fn chart_series(
         x_domain,
         timed,
         playhead: None,
+        live: frames[current].is_live.then(|| LiveSeries {
+            ends: frames[..=current]
+                .iter()
+                .enumerate()
+                .map(|(i, frame)| {
+                    frame.observation_end.unwrap_or_else(|| {
+                        frames
+                            .get(i + 1)
+                            .and_then(|f| f.elapsed_seconds)
+                            .unwrap_or(frame.elapsed_seconds.unwrap_or(0.))
+                    })
+                })
+                .collect(),
+            limited: frames[current].history_limited,
+            window: frames[current].live_window,
+        }),
         caption: if frames[current].is_live {
             format!(
-                "Elapsed live receipt time · {:.2}s",
-                frames[current].elapsed_seconds.unwrap_or(0.)
+                "View history · {:.1}s available · changes only · view-relative live receipt time{}",
+                x_domain.1 - x_domain.0,
+                if frames[current].history_limited {
+                    " · memory limit shortened history"
+                } else {
+                    ""
+                },
             )
         } else if let Some(now) = frames[current].elapsed_seconds {
             format!("{now:.2}s / {:.0}s · recorded time", x_domain.1)
@@ -387,11 +566,11 @@ pub fn parse(input: &str) -> Result<Vec<Frame>, String> {
     #[derive(Deserialize)]
     #[serde(untagged)]
     enum Document {
-        Single(Frame),
+        Single(Box<Frame>),
         Series(Vec<Frame>),
     }
     let frames = match serde_json::from_str(input).map_err(|e| format!("Invalid dump JSON: {e}"))? {
-        Document::Single(frame) => vec![frame],
+        Document::Single(frame) => vec![*frame],
         Document::Series(frames) => frames,
     };
     if frames.is_empty() {

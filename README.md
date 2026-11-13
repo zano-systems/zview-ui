@@ -40,6 +40,13 @@ MCP integration is not implemented.
   One controlling tab selects only the groups and rows shown by its screen.
   Leaving heap details releases map demand. Acquisition periods are configurable;
   default map capture includes a one-second cooldown.
+- Live charts retain up to five minutes of change-aware history, independent of
+  polling rate, starting fresh at zero on each screen visit. The visible range
+  grows up to a 20-second rolling window, with a shared 1–300 second slider and
+  duration-based zoom. Percentage
+  charts connect real readings; count/state charts retain steps. Observation
+  gaps remain gaps; dense views preserve extrema using pixel envelopes.
+  A chart-memory safeguard explicitly reports any shortened retention.
 
 ## Quick start
 

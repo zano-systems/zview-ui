@@ -21,19 +21,20 @@ impl ThreadsApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let sem = key.in_frame(&self.frames[self.frame]);
+        let (history, current) =
+            self.history_frames(crate::live_history::Key::Semaphore(key.clone()));
         let waiters = sem.and_then(|sem| sem.object.waiters.as_deref());
         let color = if waiters.is_some_and(|names| !names.is_empty()) {
             0xddb66b
         } else {
             GREEN
         };
-        let series =
-            count_history(&self.frames, self.frame, key).with_playhead(self.playback_time(cx));
-        let waiting_history = model::chart_series(&self.frames, self.frame, |frame| {
+        let series = count_history(&history, current, key).with_playhead(self.playback_time(cx));
+        let waiting_history = model::chart_series(&history, current, |frame| {
             Some(key.in_frame(frame)?.object.waiters.as_ref()?.len() as f64)
         })
         .with_playhead(self.playback_time(cx));
-        let limits = self.frames[..=self.frame]
+        let limits = history[..=current]
             .iter()
             .map(|frame| key.in_frame(frame).and_then(|sem| sem.limit))
             .collect();

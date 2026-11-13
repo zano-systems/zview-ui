@@ -151,10 +151,19 @@ impl Busy {
     }
 }
 pub(super) fn observed_busy(frames: &[Frame], current: usize, key: &WorkQueueKey) -> Busy {
-    let Some(end) = frames[current].elapsed_seconds else {
+    let Some(end) = frames[current]
+        .history_window
+        .map(|(_, end)| end)
+        .or(frames[current].elapsed_seconds)
+    else {
         return Busy::default();
     };
-    let start = (end - 10.).max(frames[0].elapsed_seconds.unwrap_or(end));
+    let start = (end - 10.).max(
+        frames[current]
+            .history_window
+            .map(|(start, _)| start)
+            .unwrap_or(frames[0].elapsed_seconds.unwrap_or(end)),
+    );
     let mut busy = Busy {
         window: end - start,
         ..Default::default()
@@ -164,11 +173,14 @@ pub(super) fn observed_busy(frames: &[Frame], current: usize, key: &WorkQueueKey
         let (Some(a), Some(b)) = (pair[0].elapsed_seconds, pair[1].elapsed_seconds) else {
             continue;
         };
-        let duration = (b.min(end) - a.max(start)).max(0.);
+        let confirmed_end = pair[0].observation_end.unwrap_or(b);
+        let duration = (b.min(end).min(confirmed_end) - a.max(start)).max(0.);
         if duration <= 0. {
             continue;
         }
-        intervals.push(b - a);
+        if !frames[current].is_live {
+            intervals.push(b - a);
+        }
         let state = Activity::from_queue(key.in_frame(&pair[0]));
         if state.known_started() {
             busy.known += duration;
@@ -229,16 +241,20 @@ impl History {
     }
     fn runs(&self) -> Vec<(f64, f64, Activity, Pressure)> {
         let mut runs = Vec::<(f64, f64, Activity, Pressure)>::new();
-        for (i, pair) in self.series.points.windows(2).enumerate() {
+        for (i, sample) in self.series.points.iter().enumerate() {
+            let Some(end) = self.series.interval_end(i).filter(|end| *end > sample.x) else {
+                continue;
+            };
             let state = self.readings[i].state;
             let pressure = self.readings[i].pressure;
             if let Some(last) = runs.last_mut()
                 && last.2 == state
                 && last.3 == pressure
+                && last.1 == sample.x
             {
-                last.1 = pair[1].x;
+                last.1 = end;
             } else {
-                runs.push((pair[0].x, pair[1].x, state, pressure));
+                runs.push((sample.x, end, state, pressure));
             }
         }
         runs
@@ -251,8 +267,34 @@ struct TimeViewport {
     start: f64,
     span: f64,
     minimum: f64,
+    live: bool,
+    live_span: Option<f64>,
+    window: crate::live_window::Settings,
 }
 impl TimeViewport {
+    fn sync_live(&mut self, domain: (f64, f64), window: crate::live_window::Settings) {
+        let changed = self.window != window;
+        let following =
+            changed || !self.live || self.span == 0. || (self.end() - self.domain.1).abs() < 1e-6;
+        let old_start = self.start;
+        if !self.live || changed {
+            self.live_span = None;
+        }
+        self.window = window;
+        self.sync(domain, true);
+        self.live = true;
+        self.span = self
+            .live_span
+            .unwrap_or(window.seconds)
+            .max(self.minimum)
+            .min(domain.1 - domain.0);
+        self.start = if following {
+            domain.1 - self.span
+        } else {
+            old_start.clamp(domain.0, domain.1 - self.span)
+        };
+    }
+
     fn sync(&mut self, domain: (f64, f64), timed: bool) {
         let fitted = self.span == self.domain.1 - self.domain.0;
         self.domain = domain;
@@ -289,10 +331,16 @@ impl zoom_strip::Viewport for TimeViewport {
         self.start = (self.start + (self.span - span) * anchor.clamp(0., 1.))
             .clamp(self.domain.0, self.domain.1 - span);
         self.span = span;
+        if self.live {
+            self.live_span = Some(span);
+        }
     }
     fn fit(&mut self) {
         self.start = self.domain.0;
         self.span = self.domain.1 - self.domain.0;
+        if self.live {
+            self.live_span = Some(crate::live_history::RETENTION_SECONDS);
+        }
     }
     fn pan_fraction(&mut self, fraction: f64) {
         self.start =
@@ -506,14 +554,26 @@ pub(super) fn view(
     });
     let history = Rc::new(history);
     state.update(cx, |s, _| {
+        if history.series.live.is_some() {
+            let selected_time = s
+                .selected
+                .and_then(|i| s.history.as_ref()?.series.points.get(i).map(|p| p.x));
+            s.selected = selected_time
+                .and_then(|time| history.series.points.iter().position(|p| p.x == time));
+        }
         // A selected historical reading remains valid as playback advances,
         // but must disappear if the session is stepped before that reading.
         if s.selected.is_some_and(|i| i >= history.readings.len()) {
             s.selected = None;
         }
-        s.navigation
-            .viewport
-            .sync(history.series.x_domain, history.series.timed);
+        let viewport = &mut s.navigation.viewport;
+        if let Some(live) = &history.series.live {
+            viewport.sync_live(history.series.x_domain, live.window);
+        } else {
+            viewport.live = false;
+            viewport.live_span = None;
+            viewport.sync(history.series.x_domain, history.series.timed);
+        }
         s.history = Some(history.clone());
     });
     let s = state.read(cx);
@@ -570,6 +630,59 @@ pub(super) fn view(
 mod tests {
     use super::{ACTIVE, Activity, BACKLOG, History, Pressure, TimeViewport, observed_busy};
     use crate::{kernel_model::WorkQueueKey, model, zoom_strip::Viewport};
+
+    #[test]
+    fn live_activity_defaults_to_a_duration_and_follows_without_growing_the_window() {
+        let mut viewport = TimeViewport::default();
+        viewport.sync_live((0., 1e-12), crate::live_window::Settings::default());
+        for end in [1., 30., 60., 90., 120.] {
+            viewport.sync_live((0., end), crate::live_window::Settings::default());
+        }
+        assert_eq!(viewport.span, 20.);
+        assert_eq!(viewport.start, 100.);
+        viewport.zoom(2., 1.);
+        viewport.sync_live((0., 121.), crate::live_window::Settings::default());
+        assert_eq!(viewport.span, 10.);
+        assert_eq!(viewport.end(), 121.);
+        viewport.pan_fraction(-1.);
+        let start = viewport.start;
+        viewport.sync_live((0., 122.), crate::live_window::Settings::default());
+        assert_eq!(
+            viewport.start, start,
+            "panned inspection must not jump to live"
+        );
+        let mut settings = crate::live_window::Settings::default();
+        settings.set(5.);
+        viewport.sync_live((0., 123.), settings);
+        assert_eq!(viewport.span, 5.);
+        assert_eq!(viewport.end(), 123.);
+    }
+
+    #[test]
+    fn live_busy_and_activity_do_not_bridge_unobserved_intervals_or_invent_cadence() {
+        let base = frames().remove(0);
+        let mut data = Vec::new();
+        for (at, until, flags) in [(0., 2., 3), (8., 10., 1), (10., 10., 1)] {
+            let mut f = base.clone();
+            f.is_live = true;
+            f.elapsed_seconds = Some(at);
+            f.observation_end = Some(until);
+            f.history_window = Some((0., 10.));
+            f.workqs[0].flags = Some(flags);
+            data.push(f);
+        }
+        let busy = observed_busy(&data, 2, &key());
+        assert_eq!(busy.window, 10.);
+        assert_eq!(busy.known, 4.);
+        assert_eq!(busy.processing, 2.);
+        assert_eq!(busy.percent(), Some(50.));
+        assert!(busy.cadence.is_none());
+        let history = History::new(&data, 2, &key());
+        let runs = history.runs();
+        assert_eq!((runs[0].0, runs[0].1), (0., 2.));
+        assert_eq!((runs[1].0, runs[1].1), (8., 10.));
+        assert!(history.hit(5.).is_none());
+    }
 
     fn key() -> WorkQueueKey {
         WorkQueueKey {

@@ -6,6 +6,8 @@ mod heap_map;
 mod kernel_model;
 mod kernel_objects;
 mod layout;
+mod live_history;
+mod live_window;
 mod model;
 mod msgq_detail;
 mod mutex_detail;
@@ -42,6 +44,7 @@ use gpui_kit::component::{
         Sidebar, SidebarFooter, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem,
         SidebarToggleButton,
     },
+    slider::{SliderEvent, SliderScale, SliderState},
     tooltip::Tooltip,
 };
 use gpui_kit::prelude::FluentBuilder;
@@ -199,6 +202,11 @@ struct MissingObjectNotification;
 struct ThreadsApp {
     frames: Vec<Frame>,
     frame: usize,
+    live_history: live_history::History,
+    chart_window: live_window::Settings,
+    window_slider: Entity<SliderState>,
+    window_focus: FocusHandle,
+    _window_subscriptions: Vec<Subscription>,
     playing: bool,
     playback_task: Option<Task<()>>,
     playback_anchor: Option<(web_time::Instant, f64)>,
@@ -281,8 +289,39 @@ impl ThreadsApp {
             cx.subscribe_in(&object_search, window, |_, _, _: &InputEvent, _, cx| {
                 cx.notify()
             });
+        let window_slider = cx.new(|_| {
+            SliderState::new()
+                .min(live_window::MIN_SECONDS as f32)
+                .max(live_window::MAX_SECONDS as f32)
+                .step(1.)
+                .scale(SliderScale::Logarithmic)
+                .default_value(live_history::DEFAULT_WINDOW_SECONDS as f32)
+        });
+        let window_observation = cx.observe_in(&window_slider, window, |app, slider, _, cx| {
+            if app
+                .chart_window
+                .set(f64::from(slider.read(cx).value().end()))
+            {
+                cx.notify();
+            }
+        });
+        let window_release = cx.subscribe_in(
+            &window_slider,
+            window,
+            |app, _, event: &SliderEvent, _, cx| {
+                if matches!(event, SliderEvent::Release(_)) {
+                    app.chart_window.refresh();
+                    cx.notify();
+                }
+            },
+        );
         let mut app = Self {
             frame: 0,
+            live_history: live_history::History::default(),
+            chart_window: live_window::Settings::default(),
+            window_slider,
+            window_focus: cx.focus_handle(),
+            _window_subscriptions: vec![window_observation, window_release],
             playing: false,
             playback_task: None,
             playback_anchor: None,
@@ -312,8 +351,59 @@ impl ThreadsApp {
             #[cfg(target_family = "wasm")]
             adapter: web_adapter::Controls::new(window, cx),
         };
+        if app.frames[0].is_live {
+            app.live_history.record(&app.frames[0], true);
+        }
         app.sync_heaps(window, cx);
         app
+    }
+
+    /// Live tables use the latest full frame; charts use compact per-object logs.
+    fn history_frames(&self, key: live_history::Key) -> (std::borrow::Cow<'_, [Frame]>, usize) {
+        if self.frames[self.frame].is_live {
+            let mut frames = self.live_history.frames(&key);
+            for frame in &mut frames {
+                frame.live_window = self.chart_window;
+            }
+            let current = frames.len() - 1;
+            (std::borrow::Cow::Owned(frames), current)
+        } else {
+            (std::borrow::Cow::Borrowed(&self.frames), self.frame)
+        }
+    }
+
+    fn cpu_history(&self) -> model::ChartSeries {
+        if self.frames[self.frame].is_live {
+            self.live_history.cpu().with_live_window(self.chart_window)
+        } else {
+            model::chart_series(&self.frames, self.frame, Frame::cpu)
+        }
+    }
+
+    fn stack_history(&self) -> model::ChartSeries {
+        if self.frames[self.frame].is_live {
+            self.live_history
+                .stacks()
+                .with_live_window(self.chart_window)
+        } else {
+            model::chart_series(&self.frames, self.frame, |f| {
+                f.stacks()
+                    .and_then(|(used, size)| model::percentage(used, size))
+            })
+        }
+    }
+
+    fn heap_history(&self, key: Option<&model::HeapKey>) -> model::ChartSeries {
+        if let Some(key) = key {
+            let (frames, current) = self.history_frames(live_history::Key::Heap(key.clone()));
+            model::heap_usage_series(&frames, current, Some(key))
+        } else if self.frames[self.frame].is_live {
+            self.live_history
+                .unknown()
+                .with_live_window(self.chart_window)
+        } else {
+            model::heap_usage_series(&self.frames, self.frame, None)
+        }
     }
 
     fn sync_heaps(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -370,6 +460,7 @@ impl ThreadsApp {
         self.playback_position = None;
         self.frame = 0;
         self.frames = frames;
+        self.live_history.clear();
         self.source = Some(path);
         self.recording_elf = elf;
         self.error = None;
@@ -1499,7 +1590,7 @@ impl Render for ThreadsApp {
                                         frame.cpu(),
                                         "Non-idle CPU time".into(),
                                         PURPLE,
-                                        model::chart_series(&self.frames, self.frame, Frame::cpu)
+                                        self.cpu_history()
                                             .with_playhead(self.playback_time(cx)),
                                         None,
                                     )
@@ -1518,9 +1609,7 @@ impl Render for ThreadsApp {
                                                 "Stack measurements unavailable".into()
                                             }),
                                         GREEN,
-                                        model::chart_series(&self.frames, self.frame, |f| {
-                                            f.stacks().and_then(|(u, s)| percentage(u, s))
-                                        }).with_playhead(self.playback_time(cx)),
+                                        self.stack_history().with_playhead(self.playback_time(cx)),
                                         None,
                                     )
                                     .h_auto(),
@@ -1535,7 +1624,7 @@ impl Render for ThreadsApp {
                                         })
                                         .unwrap_or_else(|| "No heaps available".into()),
                                         BLUE,
-                                        model::heap_usage_series(&self.frames, self.frame, heap_key.as_ref())
+                                        self.heap_history(heap_key.as_ref())
                                             .with_playhead(self.playback_time(cx)),
                                         Some(
                                             div().debug_selector(|| "heap-selector".into())
@@ -1584,9 +1673,15 @@ impl Render for ThreadsApp {
                                             .into()
                                     }),
                             )))
-                            .when(frame.is_live, |el| el.child(layout::note(
-                                "live-history-status", "Live history · latest received sample",
-                            )))
+                            .when(frame.is_live, |el| {
+                                let description = self.live_history.label();
+                                el.child(self.chart_window_controls(cx)).child(
+                                    div().id("live-history-status").debug_selector(|| "live-history-status".into())
+                                        .flex_shrink_0().whitespace_nowrap().text_xs()
+                                        .tooltip(move |window, cx| Tooltip::new(description.clone()).build(window, cx))
+                                        .child(self.live_history.footer_label())
+                                )
+                            })
                             .when(!frame.is_live, |el| el.child(
                                 div()
                                     .flex()

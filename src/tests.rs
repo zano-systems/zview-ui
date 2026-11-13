@@ -12,6 +12,82 @@ mod session_tests;
 #[path = "workq_activity_tests.rs"]
 mod workq_activity_tests;
 
+#[gpui_kit::test]
+fn live_window_slider_and_keyboard_change_only_the_viewport(cx: &mut TestAppContext) {
+    let (app, mut cx) = setup(cx);
+    cx.update(|window, cx| {
+        app.update(cx, |app, cx| {
+            let mut frame = app.frames[0].clone();
+            frame.is_live = true;
+            for i in 0..=80 {
+                frame.elapsed_seconds = Some(i as f64);
+                app.live_history.record(&frame, true);
+            }
+            app.frames = vec![frame];
+            app.frame = 0;
+            app.window_focus.focus(window, cx);
+            cx.notify();
+        })
+    });
+    cx.run_until_parked();
+    let before = app.read_with(&cx, |app, _| {
+        (
+            app.live_history.changes(),
+            app.live_history.retained_seconds(),
+        )
+    });
+    assert!(cx.debug_bounds("live-time-window").is_some());
+    let label = cx.debug_bounds("live-time-window-label").unwrap();
+    let duration = cx.debug_bounds("live-time-window-duration").unwrap();
+    assert!((label.center().y - duration.center().y).abs() <= px(0.5));
+    app.read_with(&cx, |app, _| {
+        assert_eq!(app.chart_window.seconds, 20.);
+        assert_eq!(app.cpu_history().live.unwrap().window.seconds, 20.);
+    });
+    cx.simulate_keystrokes("right");
+    app.read_with(&cx, |app, _| assert_eq!(app.chart_window.seconds, 21.));
+    cx.simulate_keystrokes("home");
+    app.read_with(&cx, |app, _| assert_eq!(app.chart_window.seconds, 1.));
+    cx.simulate_keystrokes("end");
+    app.read_with(&cx, |app, _| assert_eq!(app.chart_window.seconds, 300.));
+    let reset = cx.debug_bounds("live-time-window-reset").unwrap().center();
+    cx.simulate_click(reset, Modifiers::default());
+    app.read_with(&cx, |app, _| {
+        assert_eq!(app.chart_window.seconds, 20.);
+        assert_eq!(
+            (
+                app.live_history.changes(),
+                app.live_history.retained_seconds()
+            ),
+            before
+        );
+    });
+    // Programmatic/a11y SliderState updates must also reach the charts.
+    cx.update(|window, cx| {
+        app.update(cx, |app, cx| {
+            app.window_slider
+                .update(cx, |slider, cx| slider.set_value(5., window, cx));
+        })
+    });
+    cx.run_until_parked();
+    app.read_with(&cx, |app, _| {
+        assert_eq!(app.chart_window.seconds, 5.);
+        assert_eq!(app.cpu_history().live.unwrap().window.seconds, 5.);
+        assert_eq!(
+            (
+                app.live_history.changes(),
+                app.live_history.retained_seconds()
+            ),
+            before
+        );
+    });
+    cx.simulate_resize(size(px(1000.), px(680.)));
+    let bounds = cx.debug_bounds("live-time-window").unwrap();
+    assert!(bounds.left() >= px(0.) && bounds.right() <= px(1000.) && bounds.bottom() <= px(680.));
+    let history = cx.debug_bounds("live-history-status").unwrap();
+    assert!(history.left() >= bounds.right() && history.right() <= px(1000.));
+}
+
 #[test]
 fn screens_request_only_their_displayed_live_groups_and_rows() {
     use crate::adapter_protocol::{HeapIdentity, LiveView};
