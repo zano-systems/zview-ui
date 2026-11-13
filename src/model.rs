@@ -226,7 +226,10 @@ impl Frame {
 }
 
 pub fn percentage(used: u64, size: u64) -> Option<f64> {
-    (size > 0).then(|| used as f64 / size as f64 * 100.)
+    if size == 0 {
+        return None;
+    }
+    Some(used as f64 / size as f64 * 100.)
 }
 
 pub fn percent(value: Option<f64>) -> String {
