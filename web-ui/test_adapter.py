@@ -55,7 +55,7 @@ class AdapterTests(AioHTTPTestCase):
         response = await self.open()
         self.assertEqual(response.status, 202)
         opened = await response.json()
-        self.assertEqual(opened["version"], 4)
+        self.assertEqual(opened["version"], 5)
         left, right = await asyncio.gather(
             terminal_events(first), terminal_events(second)
         )

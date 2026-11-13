@@ -199,6 +199,20 @@ Live heap statistics are available when supported. Fragmentation maps are reques
 only while a browser is inspecting a heap, as described in Phase 4 below.
 Unavailable measurements remain unknown, not zero.
 
+Live CPU and Load use the **same counter window as ZView's TUI** through
+`Core.usage_window`, defaulting to **16 polls**. The **CPU / Load** controls on
+Threads and Thread details halve/double this to 1–64 polls; with this control
+focused, `+`/`=` doubles and `-` halves, as in the TUI. Each poll still
+produces a reading: this is a rolling window, not batches of 16 or a slower
+acquisition rate. The backend sums cycle deltas before division: CPU is thread
+cycles / all cycles; Load is thread cycles / non-idle cycles. It does not average
+rounded percentages or compressed chart changes. Early readings use the available
+polls. Only the tab controlling Live acquisition can change the window; the applied
+value is shared with other tabs and survives reload and explicit reconnect.
+Changing it takes effect between polls and marks a boundary in chart history;
+existing points are not recalculated. Unsupported snapshot aggregation reports
+the backend's effective one-poll window. Replay is unchanged.
+
 The newest received sample is always followed. Tables/details keep only the latest
 full Live frame; charts retain **five minutes by elapsed time for the current
 screen visit**, not a fixed number of frames. Entering a screen starts fresh: zero
@@ -454,6 +468,7 @@ returns 503 with setup instructions; the API can still run.
 | `POST /api/session/stop` | `{"session_id":"..."}`; wait for cleanup; idempotent for the same current session |
 | `POST /api/session/heap-detail` | Compatibility endpoint: select heap details, or Overview with `heap:null`; the browser uses `/api/session/view` instead |
 | `POST /api/session/view` | `{"session_id":"...","client_id":"...","view":{...}}`; select one screen's groups/rows and optional map together; a second controller receives 409 |
+| `POST /api/session/usage-window` | `{"session_id":"...","client_id":"...","polls":16}`; controlling Live tab requests 1–64 polls; `usage_window` events acknowledge the backend's applied value |
 | `POST /api/session/reconnect` | `{"session_id":"..."}`; reopen an inactive Live session with fresh resolution/identity/history |
 | `GET /api/events` | WebSocket; initial snapshot, then events |
 
@@ -463,7 +478,7 @@ returns 409, and non-JSON open requests return 415.
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "type": "status",
   "session_id": "opaque-session-id",
   "sequence": 1,
@@ -471,7 +486,7 @@ returns 409, and non-JSON open requests return 415.
 }
 ```
 
-Types: `snapshot`, `status`, `frame`, `notice`, `capabilities`, `health`, `heap_detail`, `view`.
+Types: `snapshot`, `status`, `frame`, `notice`, `capabilities`, `health`, `heap_detail`, `view`, `usage_window`.
 Statuses: `opening`, `reading`, `stopping`, `stopped`, `ended`, `failed`, `lost`.
 Sequences increase within a session. `source` is a tagged union:
 `{"mode":"replay","recording":"..."}` or
@@ -498,12 +513,17 @@ register a fresh per-connection UUID through `/api/events?client_id=...`. Only a
 connected client can acquire interest. The ID is a lifetime association, not
 remote authentication.
 
+**Migration from protocol 4:** rebuild WASM, restart the adapter and refresh tabs
+together. Protocol 5 adds `usage_window: {"polls":16}` events and the snapshot's
+effective `usage_window` (null before worker acknowledgement); `live_view.usage_window`
+is the requested value. CPU/Load smoothing happens in the backend, before serialization.
+
 **Migration from protocol 3:** rebuild WASM, restart the adapter and refresh tabs
 together. Use one controlling Live tab. View changes now reduce actual reads,
 and partial frames must not be interpreted as complete snapshots.
 
 **Migration from protocol 2:** rebuild WASM, restart the adapter and refresh tabs
-together. Protocol 3 introduced heap-detail events; the current protocol 4 also
+together. Protocol 3 introduced heap-detail events; protocol 4 also
 coordinates screen-driven selection. Always update client and adapter together.
 
 **Migration from protocol 1:** rebuild the WASM client and restart the Python

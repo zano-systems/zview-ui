@@ -12,14 +12,15 @@ from functools import partial
 from pathlib import Path
 
 from zview.frames import Fatal, Frame, Notice, ReplayEnd
+from zview.kernel.threads import USAGE_WINDOW_MAX
 from zview.selection import Selection
 from zview.snapshot import serialize_frame
 from zview.target import Target
 
 from heap_capture import HeapCapture, identity, seconds
-from view_selection import GROUPS, LiveView, catalog
+from view_selection import GROUPS, LiveView, ViewBusy, catalog
 
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 5
 CLIENT_QUEUE_SIZE = 16
 POLL_PERIOD = 0.1
 
@@ -62,14 +63,22 @@ def read_live(target: Target, stop: threading.Event, emit, *, capture=None,
             bootstrap = True
             rate = SampleRate()
             first = None
+            usage_window = None
             health_at = time.monotonic()
             while not stop.is_set():
                 with view.lock:
                     revision, selected_view, selection = view.snapshot()
+                    requested_usage_window = view.usage_window
                     if bootstrap:
                         selection, selected_view = Selection(), None
                     request = None if bootstrap else capture.due()
                 try:
+                    # The same Core retains counter deltas across bounded polls.
+                    # Set only between polls, never concurrently with acquisition.
+                    core.usage_window = requested_usage_window
+                    if usage_window != core.usage_window:
+                        usage_window = core.usage_window
+                        emit("usage_window", {"polls": usage_window})
                     core.select(selection)
                     if request is not None:
                         core.detail("heaps", request[1][0])
@@ -211,6 +220,7 @@ class Session:
     timing: dict | None = None
     inventory: dict | None = None
     live_view: dict | None = None
+    usage_window: int | None = None
 
     @property
     def mode(self):
@@ -329,6 +339,21 @@ class SessionController:
             "screen": "detail", "group": "heaps", "object": identity(heap),
         } if heap is not None else {"screen": "overview", "heap": None})
 
+    def choose_usage_window(self, session_id, client_id, polls):
+        self.require_session(session_id)
+        if type(polls) is not int or not 1 <= polls <= USAGE_WINDOW_MAX:
+            raise ValueError(f"CPU averaging must be from 1 to {USAGE_WINDOW_MAX} polls.")
+        if (
+            client_id not in self._client_ids or self._view is None
+            or self.session.mode != "live" or self.session.status != "reading"
+        ):
+            raise SessionBusy("CPU averaging requires a connected, polling Live session.")
+        with self._view.lock:
+            if self._view.owner != client_id:
+                raise ViewBusy("Only the tab controlling Live acquisition can change CPU averaging.")
+            self._view.usage_window = polls
+        self._sync_view()
+
     def _broadcast(self, message):
         for events in tuple(self._clients):
             if events.full():
@@ -404,6 +429,8 @@ class SessionController:
             kind, data = "heap_detail", detail
         elif kind == "capabilities":
             self.session.capabilities = data
+        elif kind == "usage_window":
+            self.session.usage_window = data["polls"]
         elif kind == "health":
             if self.session.status == "stopping":
                 return
@@ -420,6 +447,9 @@ class SessionController:
     async def start_live(self, target, source, elf_label, context, *, expected_id=None):
         capture = HeapCapture(period=self.timing["heap_period"], cooldown=self.timing["heap_cooldown"])
         view = LiveView()
+        if expected_id is not None:
+            self.require_session(expected_id)
+            view.usage_window = self.session.live_view["usage_window"]
         return await self._start(
             source, elf_label, context,
             partial(self._live_reader, capture=capture, period=self.timing["period"], view=view),

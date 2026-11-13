@@ -724,6 +724,17 @@ impl ThreadsApp {
         cx.notify();
     }
 
+    fn cpu_averaging_controls(&self, _cx: &Context<Self>) -> Option<AnyElement> {
+        #[cfg(target_family = "wasm")]
+        {
+            self.adapter_usage_controls(_cx)
+        }
+        #[cfg(not(target_family = "wasm"))]
+        {
+            None
+        }
+    }
+
     fn show_overview(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.screen = Screen::Overview;
         self.table_focus.focus(window, cx);
@@ -1481,15 +1492,16 @@ impl Render for ThreadsApp {
                             div()
                                 .flex()
                                 .flex_shrink_0()
-                                .flex_col()
-                                .gap_1()
+                                .items_center().justify_between()
+                                .child(div().flex().flex_col().gap_1()
                                 .child(div().text_2xl().font_semibold().child("Threads"))
                                 .child(
                                     div()
                                         .text_sm()
                                         .text_color(rgb(MUTED))
                                         .child("Runtime activity and thread stack usage"),
-                                ),
+                                ))
+                                .children(self.cpu_averaging_controls(cx)),
                         )
                     })
                     .when_some(self.error.clone(), |el, error| {

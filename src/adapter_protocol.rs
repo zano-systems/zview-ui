@@ -1,9 +1,9 @@
-//! Version-4 web adapter contract and pure client state, testable without a browser.
+//! Version-5 web adapter contract and pure client state, testable without a browser.
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Envelope {
@@ -25,6 +25,7 @@ pub enum Event {
     Capabilities(Capabilities),
     HeapDetail(HeapDetail),
     View(Box<LiveViewState>),
+    UsageWindow { polls: u32 },
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -51,6 +52,8 @@ pub struct Session {
     pub inventory: Option<BTreeMap<String, Vec<HeapIdentity>>>,
     #[serde(default)]
     pub live_view: Option<Box<LiveViewState>>,
+    #[serde(default)]
+    pub usage_window: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -67,6 +70,19 @@ pub struct LiveViewState {
     pub revision: u64,
     pub owner: Option<String>,
     pub view: LiveView,
+    #[serde(default = "default_usage_window")]
+    pub usage_window: u32,
+}
+
+fn default_usage_window() -> u32 {
+    16
+}
+
+fn validate_usage_window(polls: u32) -> Result<(), String> {
+    if !(1..=64).contains(&polls) {
+        return Err("CPU averaging must be from 1 to 64 polls.".into());
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -700,6 +716,12 @@ impl ClientState {
         }
         if let Event::Snapshot(snapshot) = message.event {
             if let Some(session) = &snapshot {
+                if let Some(polls) = session.usage_window {
+                    validate_usage_window(polls)?;
+                }
+                if let Some(view) = &session.live_view {
+                    validate_usage_window(view.usage_window)?;
+                }
                 if let Some(timing) = &session.timing {
                     timing.validate()?;
                 }
@@ -748,7 +770,15 @@ impl ClientState {
                     if session.mode() != Mode::Live {
                         return Err("Replay cannot change acquisition selection.".into());
                     }
+                    validate_usage_window(view.usage_window)?;
                     session.live_view = Some(view);
+                }
+                Event::UsageWindow { polls } => {
+                    if session.mode() != Mode::Live {
+                        return Err("Replay cannot change Live CPU averaging.".into());
+                    }
+                    validate_usage_window(polls)?;
+                    session.usage_window = Some(polls);
                 }
                 Event::HeapDetail(detail) => {
                     if session.mode() != Mode::Live {
@@ -1097,6 +1127,45 @@ mod tests {
                 .is_err()
             );
         }
+    }
+
+    #[test]
+    fn cpu_window_tracks_worker_ack_and_rejects_invalid_or_replay_updates() {
+        let mut state = ClientState::default();
+        state.accept(live_snapshot("one")).unwrap();
+        assert!(
+            state
+                .accept(envelope("usage_window", 1, "one", json!({"polls": 16})))
+                .unwrap()
+        );
+        assert_eq!(state.session.as_ref().unwrap().usage_window, Some(16));
+        assert!(
+            !state
+                .accept(envelope("usage_window", 1, "one", json!({"polls": 32})))
+                .unwrap()
+        );
+        for polls in [0, 65] {
+            assert!(
+                state
+                    .accept(envelope("usage_window", 2, "one", json!({"polls": polls})))
+                    .is_err()
+            );
+            assert_eq!(state.session.as_ref().unwrap().usage_window, Some(16));
+        }
+        let mut restored = live_snapshot("one");
+        if let Event::Snapshot(Some(session)) = &mut restored.event {
+            session.usage_window = Some(32);
+        }
+        restored.sequence = 2;
+        state.accept(restored).unwrap();
+        assert_eq!(state.session.as_ref().unwrap().usage_window, Some(32));
+        let mut replay = ClientState::default();
+        replay.accept(snapshot(0, "replay")).unwrap();
+        assert!(
+            replay
+                .accept(envelope("usage_window", 1, "replay", json!({"polls": 16})))
+                .is_err()
+        );
     }
 
     #[test]
