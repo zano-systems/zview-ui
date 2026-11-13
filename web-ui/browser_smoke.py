@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 import yaml
-from aiohttp import web
+from aiohttp import ClientSession, web
 from playwright.async_api import async_playwright
 
 from server import SOCKETS, create_app
@@ -675,6 +675,81 @@ async def check_live(page, live, screenshot, sockets, dialogs):
         await wait_state(page, lambda s: s["status"] == "stopped", "stop after heap capture")
 
 
+async def check_view_takeover(browser, *, release_before_reply):
+    """A real HTTP ownership race; release keeps a different, inactive screen."""
+    live = ControlledLive()
+    live.heap_test.set()
+    controller = SessionController(live_reader=live)
+    runner = web.AppRunner(create_app(ROOT, controller=controller))
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    base = f"http://127.0.0.1:{runner.addresses[0][1]}"
+    page = await browser.new_page(viewport={"width": 1400, "height": 1000})
+    try:
+        with tempfile.TemporaryDirectory(dir=ROOT / "target", prefix="view-race-") as temp:
+            build = make_build(Path(temp)).relative_to(ROOT).as_posix()
+            async with ClientSession() as client:
+                async with client.ws_connect(f"{base}/api/events?client_id=race-owner") as owner:
+                    # Drain the winning tab's connection just as a browser would,
+                    # so startup time cannot turn it into a disconnected slow client.
+                    async def drain():
+                        async for _ in owner:
+                            pass
+                    reader = asyncio.create_task(drain())
+                    try:
+                        response = await client.post(f"{base}/api/session/live",
+                                                     json={"build_dir": build})
+                        assert response.status == 202, await response.text()
+                        sid = (await response.json())["session_id"]
+                        conflict = asyncio.Event()
+
+                        async def race(route):
+                            if conflict.is_set():
+                                await route.continue_()
+                                return
+                            # The browser already sent its Overview request before
+                            # hearing of an owner. Another tab claims Objects first.
+                            response = await client.post(f"{base}/api/session/view", json={
+                                "session_id": sid, "client_id": "race-owner",
+                                "view": {"screen": "objects", "kind": None, "query": ""},
+                            })
+                            assert response.status == 200, await response.text()
+                            response = await route.fetch()
+                            assert response.status == 409, await response.text()
+                            assert (await response.json())["code"] == "view_busy"
+                            if release_before_reply:
+                                await owner.close()
+                            await route.fulfill(response=response)
+                            conflict.set()
+
+                        await page.route("**/api/session/view", race)
+                        await page.goto(base)
+                        await page.wait_for_selector('html[data-zview-ready="true"]', timeout=90000)
+                        await asyncio.wait_for(conflict.wait(), timeout=20)
+                        if not release_before_reply:
+                            # Let the losing browser consume its HTTP error before
+                            # the owner closes and broadcasts the retained Objects view.
+                            await wait_state(page, lambda s: s["view_error"] is not None,
+                                             "losing view request completed with view_busy")
+                            await owner.close()
+                        recovered = await wait_state(
+                            page, lambda s: s["controls_view"] and not s["view_loading"]
+                            and (s["sampled_view"] or {}).get("screen") == "overview",
+                            "automatic ownership recovery for a different screen",
+                        )
+                        assert recovered["error"] is None, recovered
+                        assert recovered["view_error"] is None, recovered
+                        assert live.calls == 1, "Ownership transfer reopened acquisition."
+                        assert controller.session.live_view["owner"] not in (None, "race-owner")
+                    finally:
+                        await owner.close()
+                        await reader
+    finally:
+        await page.close()
+        await runner.cleanup()
+
+
 async def check(executable_path=None, screenshot=None):
     dialogs = ScriptedDialogs()
     live = ControlledLive()
@@ -746,6 +821,8 @@ async def check(executable_path=None, screenshot=None):
                     await check_configuration(page, screenshot)
                     await check_file_pickers(page, dialogs)
                     await check_live(page, live, screenshot, runner.app[SOCKETS], dialogs)
+                    for release_before_reply in (False, True):
+                        await check_view_takeover(browser, release_before_reply=release_before_reply)
                 except Exception:
                     if screenshot:
                         await page.screenshot(path=screenshot, full_page=True)
@@ -771,7 +848,8 @@ async def check(executable_path=None, screenshot=None):
                       "keyboard tabs, live Connect/loss/reconnect, time-based compressed live history, "
                       "green/amber/red/gray status, freshness expiry, sampling labels without sample age and minimum viewport. "
                       "Live heap detail entry, scheduled maps, interest restored after stream reconnect "
-                      "without another acquisition worker, screen-scoped selection and release on navigation. "
+                      "without another acquisition worker, screen-scoped selection, release on navigation, "
+                      "and different-screen ownership recovery before/after the busy reply. "
                       "Live acquisition uses a controlled worker, not hardware.")
             finally:
                 await browser.close()
