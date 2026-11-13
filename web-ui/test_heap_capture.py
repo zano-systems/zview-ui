@@ -81,7 +81,8 @@ class CaptureTests(unittest.TestCase):
             ]}
 
         core = Core(SimpleNamespace(
-            groups={"heaps": group}, selection=None, is_live=True, available={"heaps": True},
+            groups={"heaps": group, "threads": SimpleNamespace(usage_window=1)},
+            parts={"usage_snapshot"}, selection=None, is_live=True, available={"heaps": True},
             absent_features=lambda: (), waitq_flavor="simple", connect=lambda: None,
             read_frame=read_frame,
         ))

@@ -78,7 +78,9 @@ class SelectionTests(unittest.TestCase):
         capture = HeapCapture()
         capture.choose("tab", (A["address"], A["name"]))
         scraper = SimpleNamespace(
-            selection=Selection(), is_live=True, groups={"heaps": group},
+            selection=Selection(), is_live=True,
+            groups={"heaps": group, "threads": SimpleNamespace(usage_window=1)},
+            parts={"usage_snapshot"},
             available={"threads": True, "heaps": True}, absent_features=lambda: (),
             waitq_flavor="simple", connect=lambda: None,
         )
@@ -179,6 +181,41 @@ class ViewApiTests(AioHTTPTestCase):
         self.assertEqual(set(snapshot["last_frame"]["groups"]), {"threads"})
         self.assertEqual(snapshot["inventory"], catalog(OBJECTS))
         self.assertEqual((await self.choose(sid, {"screen": "detail", "group": "heaps", "object": B})).status, 200)
+        await socket.close()
+
+    async def test_cpu_window_is_owner_scoped_validated_and_applied_only_on_worker_ack(self):
+        socket, sid = await self.start()
+        self.assertEqual((await self.choose(sid, {"screen": "overview", "heap": None})).status, 200)
+        observer = await self.client.ws_connect("/api/events?client_id=observer")
+        await observer.receive_json()
+
+        async def change(polls, session_id=sid, client_id="owner"):
+            return await self.client.post("/api/session/usage-window", json={
+                "session_id": session_id, "client_id": client_id, "polls": polls,
+            })
+
+        self.assertEqual(self.controller._view.usage_window, 16)
+        self.assertEqual((await change(32)).status, 200)
+        self.assertEqual(self.controller._view.usage_window, 32)
+        self.assertIsNone(self.controller.session.usage_window)
+        await self.controller._event(sid, "usage_window", {"polls": 32})
+        snapshot = json.loads(self.controller.snapshot())["data"]
+        self.assertEqual(snapshot["usage_window"], 32)
+        self.assertEqual(snapshot["live_view"]["usage_window"], 32)
+        for polls in (0, 65, True, 16.5, "16", None):
+            self.assertEqual((await change(polls)).status, 400)
+        self.assertEqual((await change(16, client_id="observer")).status, 409)
+        self.assertEqual((await change(16, session_id="obsolete")).status, 409)
+        self.assertEqual(self.controller._view.usage_window, 32)
+        await self.controller.stop(sid)
+        self.assertEqual((await change(16)).status, 409)
+        previous = self.controller.session
+        await self.controller.start_live(
+            None, previous.source, previous.elf, previous.context, expected_id=sid,
+        )
+        self.assertEqual(self.controller._view.usage_window, 32)
+        await self.controller.stop()
+        await observer.close()
         await socket.close()
 
     async def test_only_one_tab_controls_and_disconnect_releases_ownership(self):

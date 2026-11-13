@@ -121,6 +121,26 @@ async def select_view(request):
     return web.json_response({"accepted": True})
 
 
+async def usage_window(request):
+    if request.content_type != "application/json":
+        raise web.HTTPUnsupportedMediaType(text="Use application/json.")
+    try:
+        data = await request.json()
+        if (
+            not isinstance(data, dict) or set(data) != {"session_id", "client_id", "polls"}
+            or not all(isinstance(data[k], str) and data[k] for k in ("session_id", "client_id"))
+        ):
+            raise ValueError("Provide session_id, client_id and polls.")
+        request.app[CONTROLLER].choose_usage_window(
+            data["session_id"], data["client_id"], data["polls"],
+        )
+    except (ViewBusy, SessionBusy) as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    except (ValueError, TypeError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({"accepted": True})
+
+
 async def choose_file(request):
     if request.content_type != "application/json":
         raise web.HTTPUnsupportedMediaType(text="Use application/json.")
@@ -342,6 +362,7 @@ def create_app(data_root, controller=None, dialogs=None, *,
     app.router.add_post("/api/session/stop", stop_session)
     app.router.add_post("/api/session/heap-detail", heap_detail)
     app.router.add_post("/api/session/view", select_view)
+    app.router.add_post("/api/session/usage-window", usage_window)
     app.router.add_get("/api/events", events)
     app.router.add_get("/", frontend_asset)
     app.router.add_get("/{asset:.*}", frontend_asset)

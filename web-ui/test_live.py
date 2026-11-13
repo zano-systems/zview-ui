@@ -25,6 +25,7 @@ class LiveReaderTests(unittest.TestCase):
         order = []
         scraper = SimpleNamespace(
             selection=None, is_live=True, available={"threads": True},
+            groups={"threads": SimpleNamespace(usage_window=1)}, parts={"usage_snapshot"},
             absent_features=lambda: (), waitq_flavor="simple",
             connect=lambda: None, read_frame=lambda: {"threads": []},
         )
@@ -81,7 +82,7 @@ class LiveReaderTests(unittest.TestCase):
             ("start", 0.1), "stop", "stop", "disconnect",
         ])
         self.assertEqual([kind for kind, _ in emitted],
-                         ["capabilities", "notice", "status", "frame", "frame"])
+                         ["capabilities", "usage_window", "notice", "status", "frame", "frame"])
         self.assertEqual(emitted[0][1]["missing"], ["Stack watermark unavailable."])
         frames = [data for kind, data in emitted if kind == "frame"]
         self.assertEqual(frames[0]["live_elapsed"], 0)

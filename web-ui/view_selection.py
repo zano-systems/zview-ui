@@ -78,10 +78,12 @@ class LiveView:
         self.revision = 0
         self.view = {"screen": "overview", "heap": None}
         self.selection = Selection(groups=frozenset({"threads"}))
+        self.usage_window = 16
 
     def describe(self):
         with self.lock:
-            return {"revision": self.revision, "owner": self.owner, "view": self.view}
+            return {"revision": self.revision, "owner": self.owner, "view": self.view,
+                    "usage_window": self.usage_window}
 
     def choose(self, owner, view):
         with self.lock:

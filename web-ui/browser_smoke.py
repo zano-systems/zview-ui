@@ -295,6 +295,17 @@ class ControlledLive:
 
     def __call__(self, target, stop, emit, *, capture=None, period=0.1, view=None):
         self.calls += 1
+        usage_window = None
+
+        def sync_usage():
+            nonlocal usage_window
+            with view.lock:
+                requested = view.usage_window
+            if usage_window != requested:
+                usage_window = requested
+                emit("usage_window", {"polls": usage_window})
+
+        sync_usage()
         if self.heap_test.is_set():
             return self.heap_worker(stop, emit, capture)
         if stop.wait(0.5):
@@ -315,6 +326,7 @@ class ControlledLive:
         extra = 0
         last_view = view.snapshot()[0] if view is not None else None
         while not stop.wait(0.05):
+            sync_usage()
             if self.lost.is_set():
                 return "lost", "Controlled test: probe disconnected"
             if self.warning.is_set():
@@ -504,6 +516,38 @@ async def check_live(page, live, screenshot, sockets, dialogs):
                                   full_page=True)
         await page.mouse.click(592, 289)  # Fit retained history.
         await page.mouse.click(445, 289)  # Follow the selected time window again.
+        assert full["usage_window"] == 16, full
+        # Actual GPUI halve/double buttons, including focused-group TUI-style
+        # keyboard adjustment and both bounds. Synthetic acquisition only acknowledges
+        # configuration here; real counter arithmetic is tested with Core.
+        await page.mouse.click(1370, 121)
+        await wait_state(page, lambda s: s["usage_window"] == 32, "CPU averaging doubled")
+        await page.wait_for_timeout(150)
+        await page.keyboard.press("Equal")
+        await wait_state(page, lambda s: s["usage_window"] == 64, "CPU averaging keyboard activation")
+        await page.mouse.click(1370, 121)
+        assert (await state(page))["usage_window"] == 64
+        for polls in (32, 16, 8, 4, 2, 1):
+            await page.wait_for_timeout(150)
+            await page.mouse.click(1340, 121)
+            await wait_state(page, lambda s: s["usage_window"] == polls, f"CPU window {polls}")
+        await page.mouse.click(1340, 121)
+        assert (await state(page))["usage_window"] == 1
+        for polls in (2, 4, 8, 16, 32):
+            await page.wait_for_timeout(150)
+            await page.mouse.click(1370, 121)
+            await wait_state(page, lambda s: s["usage_window"] == polls, f"CPU window {polls}")
+        assert (await state(page))["window_seconds"] == 20
+        assert live.calls == 1, "CPU averaging must not reopen the probe."
+        await page.mouse.click(400, 634)
+        await wait_state(page, lambda s: s["screen"].startswith("Thread(")
+                         and not s["view_loading"], "thread detail with averaging controls")
+        await page.set_viewport_size({"width": 1000, "height": 680})
+        await page.wait_for_timeout(250)
+        if screenshot:
+            await page.screenshot(path=str(Path(screenshot).with_name("cpu-averaging-thread-min.png")),
+                                  full_page=True)
+        await page.set_viewport_size({"width": 1400, "height": 1000})
         await page.mouse.click(100, 180)
         await wait_state(page, lambda s: s["screen"] == "KernelObjects" and not s["view_loading"],
                          "kernel objects with header controls")
@@ -540,6 +584,7 @@ async def check_live(page, live, screenshot, sockets, dialogs):
         assert restored["buffered_frames"] == 1, restored
         assert restored["live_elapsed"] == resumed["live_elapsed"], restored
         assert restored["indicator"] == "waiting", restored
+        assert restored["usage_window"] == 32, restored
         assert live.calls == 1
         live.lost.set()
         lost = await wait_state(page, lambda s: s["status"] == "lost", "target loss")
@@ -553,6 +598,7 @@ async def check_live(page, live, screenshot, sockets, dialogs):
                                        and s["status"] == "reading", "explicit target reconnect")
         assert live.calls == 2
         assert reconnected["buffered_frames"] == 1, reconnected
+        assert reconnected["usage_window"] == 32, reconnected
         await click_header(page, primary=True)
         stopped = await wait_state(page, lambda s: s["status"] == "stopped", "live disconnect")
         assert stopped["samples_per_second"] is None, stopped
