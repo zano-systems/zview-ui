@@ -492,28 +492,55 @@ async def check_live(page, live, screenshot, sockets, dialogs):
             await page.screenshot(path=str(Path(screenshot).with_name("live-history-zoom.png")),
                                   full_page=True)
         await page.mouse.click(592, 289)  # Fit retained history.
-        await page.mouse.click(445, 289)  # Reset this chart to the 20-second default.
+        await page.mouse.click(564, 289)  # Reset icon beside Fit history.
         assert full["usage_window"] == 16, full
-        # Actual GPUI halve/double buttons, including focused-group TUI-style
-        # keyboard adjustment and both bounds. Synthetic acquisition only acknowledges
-        # configuration here; real counter arithmetic is tested with Core.
-        await page.mouse.click(1370, 121)
-        await wait_state(page, lambda s: s["usage_window"] == 32, "CPU averaging doubled")
+        # Real Kit NumberInput edits are drafts until Enter/blur. Buttons and
+        # arrow keys step by one; the Core arithmetic is tested independently.
+        async def edit_usage(value, *, enter=True):
+            bounds = (await state(page))["usage_input_bounds"]
+            assert bounds["width"] > 0 and bounds["height"] > 0, bounds
+            await page.mouse.click(bounds["x"] + bounds["width"] / 2,
+                                   bounds["y"] + bounds["height"] / 2)
+            await page.wait_for_timeout(150)
+            await page.keyboard.press("Control+A")
+            await page.keyboard.press("Backspace")
+            await page.keyboard.type(value, delay=20)
+            if enter:
+                await page.keyboard.press("Enter")
+        await edit_usage("17", enter=False)
+        assert (await state(page))["usage_window"] == 16, "Typing must not submit intermediate digits."
+        await page.keyboard.press("Enter")
+        await wait_state(page, lambda s: s["usage_window"] == 17, "direct integer CPU window")
         await page.wait_for_timeout(150)
-        await page.keyboard.press("Equal")
-        await wait_state(page, lambda s: s["usage_window"] == 64, "CPU averaging keyboard activation")
-        await page.mouse.click(1370, 121)
-        assert (await state(page))["usage_window"] == 64
-        for polls in (32, 16, 8, 4, 2, 1):
+        await page.keyboard.press("ArrowUp")
+        await wait_state(page, lambda s: s["usage_window"] == 18, "CPU number-input keyboard increment")
+        await page.wait_for_timeout(150)
+        await page.keyboard.press("ArrowDown")
+        await wait_state(page, lambda s: s["usage_window"] == 17, "CPU number-input keyboard decrement")
+        bounds = (await state(page))["usage_input_bounds"]
+        for x, expected in ((bounds["x"] + bounds["width"] + 12, 18), (bounds["x"] - 12, 17)):
             await page.wait_for_timeout(150)
-            await page.mouse.click(1340, 121)
-            await wait_state(page, lambda s: s["usage_window"] == polls, f"CPU window {polls}")
-        await page.mouse.click(1340, 121)
-        assert (await state(page))["usage_window"] == 1
-        for polls in (2, 4, 8, 16, 32):
-            await page.wait_for_timeout(150)
-            await page.mouse.click(1370, 121)
-            await wait_state(page, lambda s: s["usage_window"] == polls, f"CPU window {polls}")
+            await page.mouse.click(x, bounds["y"] + bounds["height"] / 2)
+            await wait_state(page, lambda s: s["usage_window"] == expected, "number-input step button")
+        for typed, expected in (("64", 64), ("1", 1), ("65", 64), ("0", 1), ("-1", 1), ("", 1), ("1.5", 1)):
+            await edit_usage(typed)
+            await wait_state(page, lambda s: s["usage_window"] == expected and
+                             s["usage_input"] == str(expected), f"CPU input normalization {typed!r}")
+        await edit_usage("23", enter=False)
+        await page.keyboard.press("Tab")
+        await wait_state(page, lambda s: s["usage_window"] == 23, "CPU input commits on blur")
+        await edit_usage("")
+        await wait_state(page, lambda s: s["usage_window"] == 23 and s["usage_input"] == "23",
+                         "empty input restores applied value")
+        async def reject_usage(route):
+            await route.fulfill(status=400, json={"error": "Controlled CPU-setting failure"})
+        await page.route("**/api/session/usage-window", reject_usage, times=1)
+        await edit_usage("19")
+        await wait_state(page, lambda s: s["error"] == "Controlled CPU-setting failure"
+                         and s["usage_input"] == "23", "failed edit restores applied value")
+        await edit_usage("32")
+        await wait_state(page, lambda s: s["usage_window"] == 32 and s["error"] is None,
+                         "number-input recovery after request error")
         assert live.calls == 1, "CPU averaging must not reopen the probe."
         await page.mouse.click(400, 634)
         await wait_state(page, lambda s: s["screen"].startswith("Thread(")
@@ -561,6 +588,7 @@ async def check_live(page, live, screenshot, sockets, dialogs):
         assert restored["live_elapsed"] == resumed["live_elapsed"], restored
         assert restored["indicator"] == "waiting", restored
         assert restored["usage_window"] == 32, restored
+        assert restored["usage_input"] == "32", restored
         assert live.calls == 1
         live.lost.set()
         lost = await wait_state(page, lambda s: s["status"] == "lost", "target loss")
@@ -575,6 +603,7 @@ async def check_live(page, live, screenshot, sockets, dialogs):
         assert live.calls == 2
         assert reconnected["buffered_frames"] == 1, reconnected
         assert reconnected["usage_window"] == 32, reconnected
+        assert reconnected["usage_input"] == "32", reconnected
         await click_header(page, primary=True)
         stopped = await wait_state(page, lambda s: s["status"] == "stopped", "live disconnect")
         assert stopped["samples_per_second"] is None, stopped

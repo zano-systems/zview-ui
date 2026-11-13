@@ -203,8 +203,12 @@ Unavailable measurements remain unknown, not zero.
 
 Live CPU and Load use the **same counter window as ZView's TUI** through
 `Core.usage_window`, defaulting to **16 polls**. The **CPU / Load** controls on
-Threads and Thread details halve/double this to 1–64 polls; with this control
-focused, `+`/`=` doubles and `-` halves, as in the TUI. Each poll still
+Threads and Thread details use GPUI Kit's **number input** for **1–64 polls**.
+Type an integer and press **Enter** or leave the field with **Tab** to apply;
+the input's buttons and Up/Down keys step by one. Typing does not submit
+intermediate digits. Empty/invalid edits restore the applied value, and
+out-of-range integer edits are clamped to the limits. Failed requests also
+restore the last backend-applied value. Each poll still
 produces a reading: this is a rolling window, not batches of 16 or a slower
 acquisition rate. The backend sums cycle deltas before division: CPU is thread
 cycles / all cycles; Load is thread cycles / non-idle cycles. It does not average
@@ -225,8 +229,9 @@ The default visible window is **20 seconds**. It initially grows from zero with
 the collected observations, then rolls forward. Scroll over a chart to zoom that
 chart independently. The duration at its top-left is the **actual visible time span**
 from the plotted axis, including wheel zoom and limits from available history.
-**Reset 20s** is explicitly an action to restore the default, not a second label
-claiming to show the current zoom. **Fit history** shows the retained observations.
+The **counterclockwise reset icon** beside **Fit history** restores the
+20-second default; its tooltip and accessible label explain the action.
+**Fit history** shows the retained observations.
 The work-queue activity strip likewise supports local wheel zoom and panning.
 There is no footer Window slider. Zoom, reset and fit do not change acquisition
 or delete retained observations.
