@@ -1,1 +1,6 @@
 name: zview-ui
+
+package-managers:
+  pip:
+    requirement-files:
+      - web-ui/requirements-west.txt

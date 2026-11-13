@@ -3,6 +3,9 @@
 import argparse
 import asyncio
 import contextlib
+import signal
+import sys
+import webbrowser
 from pathlib import Path
 
 from aiohttp import web
@@ -370,9 +373,55 @@ def create_app(data_root, controller=None, dialogs=None, *,
     return app
 
 
+async def start_live_session(app, live):
+    """Start Live from a build configuration, as the Connect action does."""
+    target, source, context = await asyncio.to_thread(live_configuration, app[DATA_ROOT], live)
+    await app[CONTROLLER].start_live(target, source, context["elf"], context)
+    return context
+
+
+async def serve(data_root, *, host="127.0.0.1", port=8765, period=0.1, heap_period=1.,
+                heap_cooldown=1., live=None, open_browser=False, ready=None, stop=None):
+    """Serve until ``stop`` is set (or Ctrl+C), optionally auto-connecting ``live``."""
+    app = create_app(data_root, period=period, heap_period=heap_period,
+                     heap_cooldown=heap_cooldown)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    try:
+        site = web.TCPSite(runner, host, port)
+        await site.start()
+        url = f"http://{host}:{runner.addresses[0][1]}/"
+        if live is not None:
+            try:
+                context = await start_live_session(app, live)
+                print(f"ZView: connecting to {context.get('board') or 'board unknown'} "
+                      f"via {context['runner']} ({context['target'] or 'default target'})",
+                      flush=True)
+            except (SessionBusy, ValueError, OSError, RuntimeError, KeyError, TypeError,
+                    BuildDirError, YAMLError) as exc:
+                # Keep serving: the session dialog can correct the configuration.
+                print(f"ZView: Live auto-connect failed: {exc}", file=sys.stderr, flush=True)
+        print(f"ZView: {url}\nCtrl+C stops the server.", flush=True)
+        if open_browser:
+            webbrowser.open(url)
+        if ready is not None:
+            ready(url)
+        if stop is None:
+            stop = asyncio.Event()
+            loop = asyncio.get_running_loop()
+            for signum in (signal.SIGINT, signal.SIGTERM):
+                # Windows has no loop signal handlers; Ctrl+C still raises there.
+                with contextlib.suppress(NotImplementedError):
+                    loop.add_signal_handler(signum, stop.set)
+        await stop.wait()
+    finally:
+        print("ZView: stopping…", flush=True)
+        await runner.cleanup()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--port", type=int, default=8765, help="0 picks a free port.")
     parser.add_argument("--period", type=float, default=0.1,
                         help="Live polling period in seconds; 0 polls back-to-back (default: 0.1).")
     parser.add_argument("--heap-period", type=float, default=1.,
@@ -385,15 +434,32 @@ def main():
         default=HERE.parent,
         help="Trusted input directory; paths outside it are rejected.",
     )
+    parser.add_argument("--live-build-dir", metavar="DIR",
+                        help="Connect Live to this build at startup (relative to --data-root).")
+    parser.add_argument("--domain", help="Firmware image of a sysbuild build.")
+    parser.add_argument("--elf", help="ELF override (relative to --data-root).")
+    parser.add_argument("--runner", help="Live runner override.")
+    parser.add_argument("--target", help="Live MCU/target override.")
+    parser.add_argument("--frequency", type=int, help="Probe clock override, in Hz.")
+    parser.add_argument("--open", action="store_true", help="Open the browser once serving.")
     args = parser.parse_args()
     if not args.data_root.is_dir():
         parser.error("--data-root must be an existing directory")
+    overrides = {k: getattr(args, k) for k in ("domain", "elf", "runner", "target", "frequency")}
+    if args.live_build_dir is None and any(v is not None for v in overrides.values()):
+        parser.error("Live overrides require --live-build-dir.")
+    live = None
+    if args.live_build_dir is not None:
+        live = {"build_dir": args.live_build_dir,
+                **{k: v for k, v in overrides.items() if v is not None}}
     try:
-        app = create_app(args.data_root, period=args.period, heap_period=args.heap_period,
-                         heap_cooldown=args.heap_cooldown)
+        asyncio.run(serve(args.data_root, port=args.port, period=args.period,
+                          heap_period=args.heap_period, heap_cooldown=args.heap_cooldown,
+                          live=live, open_browser=args.open))
     except ValueError as exc:
         parser.error(str(exc))
-    web.run_app(app, host="127.0.0.1", port=args.port)
+    except KeyboardInterrupt:
+        pass
 
 
 if __name__ == "__main__":

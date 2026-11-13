@@ -1,0 +1,5 @@
+# `west zview-ui` adds the manifest's zview checkout to sys.path; ZView's own
+# dependencies come from its module's requirements. Keep aiohttp in step with
+# requirements.txt.
+aiohttp==3.13.3
+PyYAML==6.0.3

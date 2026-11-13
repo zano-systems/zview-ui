@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+
+west-commands:
+  - file: scripts/west_commands/zview_ui_cmd.py
+    commands:
+      - name: zview-ui
+        class: ZViewUiCommand
+        help: open the ZView browser UI connected to the current build

@@ -84,6 +84,64 @@ just web-ui ""
 Bare `cargo run` also uses the small sample. Native typography is unchanged;
 the browser bundles IBM Plex Sans and JetBrains Mono.
 
+## West integration (`west zview-ui`)
+
+In a Zephyr workspace, ZView UI is a west module whose `west zview-ui` command
+builds the browser UI, starts the [Python session adapter](web-ui/README.md),
+connects Live to the target described by the build directory, and opens the
+browser. Add both projects to your manifest. ZView must be at the commit the
+adapter is pinned to (see `web-ui/requirements.txt`):
+
+```yaml
+manifest:
+  remotes:
+    - name: wkhadgar
+      url-base: https://github.com/wkhadgar
+    - name: zano-systems
+      url-base: https://github.com/zano-systems
+  projects:
+    - name: zview
+      remote: wkhadgar
+      revision: cfc6d6d383ff4fbe04ec35f7a8d84ed99d5b71ac
+      path: modules/tools/zview
+      west-commands: scripts/west-commands.yml
+    - name: zview-ui
+      remote: zano-systems
+      revision: main
+      path: modules/tools/zview-ui
+      west-commands: scripts/west-commands.yml
+```
+
+One-time setup: install the Python dependencies of both modules (ZView's and
+`aiohttp`), and then the WASM tools inside the module checkout:
+
+```sh
+west update zview zview-ui
+west packages pip --install
+(cd modules/tools/zview-ui && just web-setup)
+```
+
+Build with the ZView snippet and launch:
+
+```sh
+west build -b <board> app -S zview
+west zview-ui                  # build dir from build.dir-fmt, cwd, or ./build
+west zview-ui -d other-build --no-open --port 0
+west zview-ui -r gdb -t 127.0.0.1:1234   # e.g. QEMU's gdbstub (no runners.yaml)
+```
+
+The command uses the manifest's `zview` checkout, falling back to an installed
+`zview` package. It warns if the checkout differs from the adapter's pin.
+Runner, target and probe clock come from the build's `runners.yaml`
+(`debug-runner` before `flash-runner`). Override them with `-r/-t/--frequency`,
+the ELF with `-e`, or the sysbuild image with `--domain`. The adapter may only
+read paths under its data root. That root is the west workspace when it holds
+the build and the application sources, otherwise their nearest common directory;
+`--data-root` overrides it. If auto-connect fails, the error is printed and the
+server keeps running so you can fix the settings in **Configure…**. Each run
+rebuilds the WASM site incrementally; `--no-build` serves the existing one.
+**Ctrl+C** disconnects the probe and stops the server.
+
 ### Browser behavior and static hosting
 
 The launcher prints a local URL, opens the browser, and serves only generated

@@ -27,6 +27,13 @@ python3.12 -m venv .venv-web
 .venv-web/bin/python web-ui/server.py
 ```
 
+From a Zephyr west workspace, `west zview-ui` does all of this for the current
+build directory and connects Live automatically; see the main README's
+[West integration](../README.md#west-integration-west-zview-ui). The server
+offers the same startup connection directly with `--live-build-dir DIR` (plus
+`--domain/--elf/--runner/--target/--frequency`) and `--open`; `--port 0` picks a
+free port.
+
 The first setup installs nightly Rust, the WASM target and wasm-bindgen under
 `target/tools`. Builds download pinned fonts. No Node/npm or probe is needed for Replay.
 On Windows use `.venv-web\Scripts\python.exe` instead of `.venv-web/bin/python`.
