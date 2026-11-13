@@ -90,9 +90,7 @@ impl ThreadsApp {
             .and_then(ChunkMap::new)
             .map(|map| map.fragmentation());
         let fragmentation_series = if self.frames[self.frame].is_live {
-            self.live_history
-                .fragmentation(key)
-                .with_live_window(self.chart_window)
+            self.live_history.fragmentation(key)
         } else {
             fragmentation_history(&self.frames, self.frame, key)
         }

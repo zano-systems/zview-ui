@@ -29,8 +29,6 @@ pub struct Frame {
     pub history_window: Option<(f64, f64)>,
     #[serde(skip)]
     pub history_limited: bool,
-    #[serde(skip)]
-    pub live_window: crate::live_window::Settings,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -276,7 +274,6 @@ pub struct ChartSeries {
 pub struct LiveSeries {
     pub ends: Vec<f64>,
     pub limited: bool,
-    pub window: crate::live_window::Settings,
 }
 
 /// A display-only pixel envelope, never a replacement for retained observations.
@@ -290,13 +287,6 @@ pub struct EnvelopeBucket {
 }
 
 impl ChartSeries {
-    pub fn with_live_window(mut self, window: crate::live_window::Settings) -> Self {
-        if let Some(live) = &mut self.live {
-            live.window = window;
-        }
-        self
-    }
-
     /// Compress scalar repetition after correlated source metadata has been used.
     pub fn compact_live(&mut self) {
         let Some(live) = &mut self.live else { return };
@@ -535,7 +525,6 @@ pub fn chart_series(
                 })
                 .collect(),
             limited: frames[current].history_limited,
-            window: frames[current].live_window,
         }),
         caption: if frames[current].is_live {
             format!(

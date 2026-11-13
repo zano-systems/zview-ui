@@ -42,8 +42,8 @@ MCP integration is not implemented.
   default map capture includes a one-second cooldown.
 - Live charts retain up to five minutes of change-aware history, independent of
   polling rate, starting fresh at zero on each screen visit. The visible range
-  grows up to a 20-second rolling window, with a shared 1–300 second slider and
-  duration-based zoom. Percentage
+  grows up to a 20-second rolling window, with per-chart wheel zoom, accurate
+  visible-duration labels, and explicit reset/fit actions. Percentage
   charts connect real readings; count/state charts retain steps. Observation
   gaps remain gaps; dense views preserve extrema using pixel envelopes.
   A chart-memory safeguard explicitly reports any shortened retention.

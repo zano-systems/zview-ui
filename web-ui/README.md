@@ -222,18 +222,14 @@ is its first valid reading, not the session's start. Returning to that screen
 starts a new visit rather than restoring its earlier curve.
 
 The default visible window is **20 seconds**. It initially grows from zero with
-the collected observations, then rolls forward. The footer's **Window** slider
-selects **1–300 seconds** for all Live charts on the screen, including the work-queue
-activity strip. Short windows have finer pointer control using a logarithmic track.
-The duration readout appears once, after the slider; clicking it restores 20 seconds.
-With the control focused, arrow keys change
-one second, Page Up/Down change ten, and Home/End select the bounds.
-
-Changing the slider resets individual chart zoom/pan to follow the selected window.
-Wheel zoom can still inspect an individual chart more closely, **Fit history** shows
-retained history, and **Last Ns** restores the selected slider duration. Neither the
-slider nor zoom changes acquisition or deletes retained observations. The selected
-duration remains while navigating screens; page reload restores the 20-second default.
+the collected observations, then rolls forward. Scroll over a chart to zoom that
+chart independently. The duration at its top-left is the **actual visible time span**
+from the plotted axis, including wheel zoom and limits from available history.
+**Reset 20s** is explicitly an action to restore the default, not a second label
+claiming to show the current zoom. **Fit history** shows the retained observations.
+The work-queue activity strip likewise supports local wheel zoom and panning.
+There is no footer Window slider. Zoom, reset and fit do not change acquisition
+or delete retained observations.
 
 Chart storage is separate from full snapshots. Per-object correlated measurements
 (including ownership/state needed by tooltips), overview metrics and fragmentation

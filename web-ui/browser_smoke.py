@@ -3,7 +3,6 @@
 import argparse
 import asyncio
 import json
-import math
 import shutil
 import tempfile
 import threading
@@ -479,29 +478,7 @@ async def check_live(page, live, screenshot, sockets, dialogs):
         assert full["visible_threads"] == 2, full
         assert live.calls == 1
         assert full["indicator"] == "healthy", full
-        assert full["window_seconds"] == 20, full
-        bounds = full["window_slider_bounds"]
-        assert bounds["width"] > 0, bounds
-        # The native GPUI slider uses a logarithmic track for 1–300 seconds.
-        await page.mouse.click(bounds["x"] + bounds["width"] * math.log(5) / math.log(300),
-                               bounds["y"] + bounds["height"] / 2)
-        selected = await wait_state(page, lambda s: s["window_seconds"] == 5, "actual time-window slider")
-        assert selected["history_changes"] == full["history_changes"], selected
-        assert selected["history_seconds"] == full["history_seconds"], selected
-        await page.wait_for_timeout(150)
-        if screenshot:
-            await page.screenshot(path=str(Path(screenshot).with_name("live-window-slider.png")), full_page=True)
-        await page.keyboard.press("ArrowRight")
-        await wait_state(page, lambda s: s["window_seconds"] == 6, "slider keyboard increment")
-        await page.keyboard.press("Home")
-        await wait_state(page, lambda s: s["window_seconds"] == 1, "slider keyboard minimum")
-        await page.keyboard.press("End")
-        await wait_state(page, lambda s: s["window_seconds"] == 300, "slider keyboard maximum")
-        await page.mouse.click(bounds["x"] + bounds["width"] + 32,
-                               bounds["y"] + bounds["height"] / 2)
-        reset_window = await wait_state(page, lambda s: s["window_seconds"] == 20, "reset selected window")
-        assert reset_window["history_bytes"] == full["history_bytes"], reset_window
-        assert live.calls == 1, "Window changes must not restart acquisition."
+        assert "window_slider_bounds" not in full, "The redundant footer slider was removed."
         # The actual GPUI wheel/fit controls only change the viewport. Repeated
         # source readings and zooming must not allocate or discard chart history.
         await page.mouse.move(430, 330)
@@ -515,7 +492,7 @@ async def check_live(page, live, screenshot, sockets, dialogs):
             await page.screenshot(path=str(Path(screenshot).with_name("live-history-zoom.png")),
                                   full_page=True)
         await page.mouse.click(592, 289)  # Fit retained history.
-        await page.mouse.click(445, 289)  # Follow the selected time window again.
+        await page.mouse.click(445, 289)  # Reset this chart to the 20-second default.
         assert full["usage_window"] == 16, full
         # Actual GPUI halve/double buttons, including focused-group TUI-style
         # keyboard adjustment and both bounds. Synthetic acquisition only acknowledges
@@ -537,7 +514,6 @@ async def check_live(page, live, screenshot, sockets, dialogs):
             await page.wait_for_timeout(150)
             await page.mouse.click(1370, 121)
             await wait_state(page, lambda s: s["usage_window"] == polls, f"CPU window {polls}")
-        assert (await state(page))["window_seconds"] == 20
         assert live.calls == 1, "CPU averaging must not reopen the probe."
         await page.mouse.click(400, 634)
         await wait_state(page, lambda s: s["screen"].startswith("Thread(")

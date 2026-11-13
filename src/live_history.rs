@@ -594,7 +594,6 @@ impl History {
             live: Some(LiveSeries {
                 ends,
                 limited: self.limited(),
-                window: crate::live_window::Settings::default(),
             }),
         }
     }

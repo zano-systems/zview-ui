@@ -269,23 +269,19 @@ struct TimeViewport {
     minimum: f64,
     live: bool,
     live_span: Option<f64>,
-    window: crate::live_window::Settings,
 }
 impl TimeViewport {
-    fn sync_live(&mut self, domain: (f64, f64), window: crate::live_window::Settings) {
-        let changed = self.window != window;
-        let following =
-            changed || !self.live || self.span == 0. || (self.end() - self.domain.1).abs() < 1e-6;
+    fn sync_live(&mut self, domain: (f64, f64)) {
+        let following = !self.live || self.span == 0. || (self.end() - self.domain.1).abs() < 1e-6;
         let old_start = self.start;
-        if !self.live || changed {
+        if !self.live {
             self.live_span = None;
         }
-        self.window = window;
         self.sync(domain, true);
         self.live = true;
         self.span = self
             .live_span
-            .unwrap_or(window.seconds)
+            .unwrap_or(crate::live_history::DEFAULT_WINDOW_SECONDS)
             .max(self.minimum)
             .min(domain.1 - domain.0);
         self.start = if following {
@@ -567,8 +563,8 @@ pub(super) fn view(
             s.selected = None;
         }
         let viewport = &mut s.navigation.viewport;
-        if let Some(live) = &history.series.live {
-            viewport.sync_live(history.series.x_domain, live.window);
+        if history.series.live.is_some() {
+            viewport.sync_live(history.series.x_domain);
         } else {
             viewport.live = false;
             viewport.live_span = None;
@@ -634,28 +630,26 @@ mod tests {
     #[test]
     fn live_activity_defaults_to_a_duration_and_follows_without_growing_the_window() {
         let mut viewport = TimeViewport::default();
-        viewport.sync_live((0., 1e-12), crate::live_window::Settings::default());
+        viewport.sync_live((0., 1e-12));
         for end in [1., 30., 60., 90., 120.] {
-            viewport.sync_live((0., end), crate::live_window::Settings::default());
+            viewport.sync_live((0., end));
         }
         assert_eq!(viewport.span, 20.);
         assert_eq!(viewport.start, 100.);
         viewport.zoom(2., 1.);
-        viewport.sync_live((0., 121.), crate::live_window::Settings::default());
+        viewport.sync_live((0., 121.));
         assert_eq!(viewport.span, 10.);
         assert_eq!(viewport.end(), 121.);
         viewport.pan_fraction(-1.);
         let start = viewport.start;
-        viewport.sync_live((0., 122.), crate::live_window::Settings::default());
+        viewport.sync_live((0., 122.));
         assert_eq!(
             viewport.start, start,
             "panned inspection must not jump to live"
         );
-        let mut settings = crate::live_window::Settings::default();
-        settings.set(5.);
-        viewport.sync_live((0., 123.), settings);
-        assert_eq!(viewport.span, 5.);
-        assert_eq!(viewport.end(), 123.);
+        viewport.sync_live((0., 123.));
+        assert_eq!(viewport.span, 10.);
+        assert_eq!(viewport.start, start);
     }
 
     #[test]
