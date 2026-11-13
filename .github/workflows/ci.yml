@@ -26,6 +26,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           targets: wasm32-unknown-unknown
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           key: web
@@ -45,6 +46,20 @@ jobs:
         run: cargo install wasm-bindgen-cli --version 0.2.129 --locked --root target/tools
       - name: Build static browser application
         run: python3 scripts/web_ui.py build
+      - name: Check Rust web client
+        run: cargo +nightly clippy --locked --lib --target wasm32-unknown-unknown -- -D warnings
+      - name: Install Python replay adapter
+        run: |
+          python -m pip install -r web-ui/requirements-browser.txt
+          # The package version can stay unchanged while the exact Git pin changes.
+          python -m pip install --force-reinstall --no-deps -r web-ui/requirements.txt
+          python -m pip check
+      - name: Test replay adapter HTTP and WebSocket
+        run: python -m unittest discover -s web-ui -p 'test_*.py' -v
+      - name: Install browser for Rust replay smoke
+        run: python -m playwright install --with-deps chromium
+      - name: Exercise shared Rust UI with replay adapter
+        run: python web-ui/browser_smoke.py
 
   test:
     name: Rust and recording tests (macOS)

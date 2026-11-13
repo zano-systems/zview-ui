@@ -16,13 +16,26 @@ use gpui_kit::*;
 
 impl ThreadsApp {
     pub(super) fn kernel_objects(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let rows = kernel_model::rows(&self.frames[self.frame]);
+        #[cfg(target_family = "wasm")]
+        let loading = self.live_view_loading(cx);
+        #[cfg(not(target_family = "wasm"))]
+        let loading = false;
+        #[cfg(target_family = "wasm")]
+        let loading_note = self.live_view_loading_note();
+        #[cfg(not(target_family = "wasm"))]
+        let loading_note = String::new();
+        let rows = if loading {
+            Vec::new()
+        } else {
+            kernel_model::rows(&self.frames[self.frame])
+        };
         let kind = self.object_kind;
         let query = self.object_search.read(cx).value();
         let visible = rows
             .iter()
             .filter(|row| row.matches(kind, &query))
             .collect::<Vec<_>>();
+        let total = self.object_inventory_count(None).unwrap_or(rows.len());
         div()
             .id("kernel-objects")
             .debug_selector(|| "kernel-objects".into())
@@ -40,7 +53,8 @@ impl ThreadsApp {
             .child(
                 div().debug_selector(|| "kernel-table-toolbar".into())
                     .w_full().min_w_0().flex().flex_shrink_0().items_center().justify_between().flex_wrap().gap_3().text_sm()
-                    .child(format!("{} of {} objects", visible.len(), rows.len()))
+                    .child(if loading { "Reading selected objects…".into() }
+                        else { format!("{} of {} objects", visible.len(), total) })
                     .child(
                         div().flex().items_center().flex_wrap().gap_3()
                             .child(div().debug_selector(|| "object-search".into()).w(px(310.)).child(
@@ -70,14 +84,16 @@ impl ThreadsApp {
                                 .child(div().w(px(115.)).child("ADDRESS"))
                                 .child(div().flex_1().min_w(px(330.)).child("STATE / USAGE"))
                                 .child(div().w(px(260.)).child("WAITING THREADS")))
-                            .child(summary_row(&Summary::from_rows(&visible), kind))
+                            .when(!loading, |el| el.child(summary_row(&Summary::from_rows(&visible), kind)))
                             .child(div().id("object-rows").debug_selector(|| "object-rows".into())
                                 .relative().flex().flex_col().flex_1().min_h_0().overflow_y_scroll().lock_scroll_axis()
                                 .track_scroll(&self.object_rows_scroll).vertical_scrollbar(&self.object_rows_scroll)
                                 .children(visible.iter().enumerate().map(|(index, row)| object_row(row, index, cx)))
-                            .when(visible.is_empty(), |el| {
+                            .when(loading, |el| el.child(div().p_6().text_color(rgb(MUTED))
+                                .child(loading_note)))
+                            .when(visible.is_empty() && !loading, |el| {
                                 el.child(div().debug_selector(|| "kernel-empty".into()).p_6().text_color(rgb(MUTED))
-                                    .child(if rows.is_empty() {
+                                    .child(if total == 0 {
                                         "No kernel objects in this snapshot. This build or dump may not include them."
                                     } else {
                                         "No objects match these filters. Clear filters to see all objects."

@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 #[cfg(not(target_family = "wasm"))]
 use std::{fs, path::Path};
 
@@ -19,12 +19,17 @@ pub struct Frame {
     pub workqs: Vec<crate::kernel_model::WorkQueue>,
     /// Seconds since the first usable frame; absent in ordinary single-frame dumps.
     pub elapsed_seconds: Option<f64>,
+    /// Only the web live adapter sets this; live receipt time is not recorded time.
+    #[serde(skip)]
+    pub is_live: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Thread {
     pub address: u64,
     pub name: String,
+    /// Explicit backend identity wins; older dumps fall back to the legacy name.
+    pub is_idle: Option<bool>,
     pub stack_start: Option<u64>,
     pub stack_size: Option<u64>,
     pub runtime: Option<Runtime>,
@@ -37,6 +42,10 @@ pub struct Thread {
 }
 
 impl Thread {
+    pub fn is_idle(&self) -> bool {
+        self.is_idle.unwrap_or(self.name == "idle")
+    }
+
     pub fn activity_description(&self) -> &'static str {
         match self.runtime.as_ref() {
             Some(runtime) if runtime.active => {
@@ -124,6 +133,7 @@ impl ThreadKey {
 pub struct Runtime {
     pub cpu: Option<f64>,
     pub cpu_normalized: Option<f64>,
+    #[serde(alias = "is_active")]
     pub active: bool,
     pub stack_watermark: Option<u64>,
     pub stack_watermark_percent: Option<f64>,
@@ -141,7 +151,7 @@ pub struct Heap {
 }
 
 /// The dump supplies address-ordered sizes, not absolute chunk addresses.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct HeapChunk {
     pub size: u64,
     pub used: bool,
@@ -178,7 +188,7 @@ impl Heap {
 
 impl Frame {
     pub fn visible_threads(&self) -> Vec<&Thread> {
-        let mut threads: Vec<_> = self.threads.iter().filter(|t| t.name != "idle").collect();
+        let mut threads: Vec<_> = self.threads.iter().filter(|t| !t.is_idle()).collect();
         threads.sort_by(|a, b| {
             let cpu = |t: &Thread| t.runtime.as_ref().and_then(|r| r.cpu_normalized);
             cpu(b)
@@ -322,7 +332,11 @@ pub fn chart_series(
     let timed = frames[current].elapsed_seconds.is_some();
     let x_domain = if timed {
         (
-            0.,
+            if frames[current].is_live {
+                frames[0].elapsed_seconds.unwrap_or(0.).floor()
+            } else {
+                0.
+            },
             frames
                 .last()
                 .and_then(|f| f.elapsed_seconds)
@@ -346,7 +360,12 @@ pub fn chart_series(
         x_domain,
         timed,
         playhead: None,
-        caption: if let Some(now) = frames[current].elapsed_seconds {
+        caption: if frames[current].is_live {
+            format!(
+                "Elapsed live receipt time · {:.2}s",
+                frames[current].elapsed_seconds.unwrap_or(0.)
+            )
+        } else if let Some(now) = frames[current].elapsed_seconds {
             format!("{now:.2}s / {:.0}s · recorded time", x_domain.1)
         } else if frames.len() == 1 {
             "Single snapshot · no history".into()
@@ -421,6 +440,21 @@ mod tests {
     }
 
     #[test]
+    fn live_history_keeps_elapsed_times_when_old_frames_are_evicted() {
+        let mut frames = vec![sample(), sample(), sample()];
+        for (i, frame) in frames.iter_mut().enumerate() {
+            frame.is_live = true;
+            frame.elapsed_seconds = Some(25. + i as f64 * 0.1);
+        }
+        frames.remove(0);
+        let series = chart_series(&frames, 1, Frame::cpu);
+        assert_eq!(series.points[0].x, 25.1);
+        assert!(series.x_domain.0 >= 25.);
+        assert!(series.caption.contains("live receipt time"));
+        assert!(!series.caption.contains("recorded"));
+    }
+
+    #[test]
     fn matches_real_dump_and_excludes_idle() {
         let f = sample();
         assert_eq!(f.visible_threads().len(), 2);
@@ -428,6 +462,42 @@ mod tests {
         assert!((f.cpu().unwrap() - 0.121993447).abs() < 0.00001);
         assert_eq!(f.stacks(), Some((984, 2048)));
         assert_eq!(f.heaps[0].percent(), Some(75.));
+    }
+
+    #[test]
+    fn explicit_idle_identity_controls_rows_cpu_and_stack_totals() {
+        let f = parse(
+            r#"{"threads":[
+            {"address":1,"name":"idle cpu 0","is_idle":true,"stack_size":100,
+             "runtime":{"is_active":true,"cpu":90,"cpu_normalized":90,"stack_watermark":80}},
+            {"address":2,"name":"idle","is_idle":false,"stack_size":200,
+             "runtime":{"is_active":false,"cpu":10,"cpu_normalized":10,"stack_watermark":20}}
+        ]}"#,
+        )
+        .unwrap()
+        .remove(0);
+        assert_eq!(f.visible_threads().len(), 1);
+        assert_eq!(f.visible_threads()[0].address, 2);
+        assert_eq!(f.cpu(), Some(10.));
+        assert_eq!(f.stacks(), Some((20, 200)));
+        assert!(f.threads[0].is_idle());
+        assert!(!f.threads[1].is_idle());
+    }
+
+    #[test]
+    fn legacy_idle_fallback_does_not_turn_missing_measurements_into_zero() {
+        let f = parse(
+            r#"{"threads":[
+            {"address":1,"name":"idle"},
+            {"address":2,"name":"worker"}
+        ]}"#,
+        )
+        .unwrap()
+        .remove(0);
+        assert!(f.threads.iter().all(|t| t.is_idle.is_none()));
+        assert_eq!(f.visible_threads().len(), 1);
+        assert_eq!(f.cpu(), None);
+        assert_eq!(f.stacks(), None);
     }
 
     #[test]

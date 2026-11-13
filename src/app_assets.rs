@@ -45,12 +45,14 @@ assets::icon_assets!(
         PanelLeftOpen,
         Pause,
         Play,
+        Plug,
         Plus,
         RefreshCw,
         RotateCw,
         Search,
         Settings,
         TriangleAlert,
+        Unplug,
     ]
 );
 
@@ -95,6 +97,15 @@ mod tests {
             "icons/check.svg",
             "icons/close.svg",
             "icons/inbox.svg",
+            "icons/folder.svg",
+            "icons/file.svg",
+            "icons/arrow-up.svg",
+            "icons/settings.svg",
+            "icons/plug.svg",
+            "icons/unplug.svg",
+            "icons/rotate-cw.svg",
+            "icons/loader-circle.svg",
+            "icons/circle-alert.svg",
         ] {
             assert!(WebIcons.load(path).unwrap().is_some(), "{path}");
         }

@@ -19,6 +19,10 @@ wasm-bindgen = "=0.2.129"
 wasm-bindgen-futures = "0.4"
 futures-channel = "0.3"
 console_error_panic_hook = "0.1"
+futures-util = "0.3"
+gloo-net = { version = "=0.6.0", default-features = false, features = ["http", "json", "websocket"] }
+gloo-timers = { version = "=0.3.0", features = ["futures"] }
+web-sys = { version = "0.3", features = ["Location", "Window"] }
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 # Match Kit 0.7.3's GPUI snapshot. Enabling Kit's test-support feature also

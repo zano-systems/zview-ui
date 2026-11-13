@@ -6,13 +6,15 @@ activity, kernel objects, and memory usage, built in Rust with
 
 ZView UI is a companion frontend to [ZView](https://github.com/rodrigopex/zview),
 which provides data acquisition and decoding. Viewing exported JSON does not
-require ZView's Python backend; native recording import does.
+require ZView's Python backend; native recording import and the web session adapter do.
 
 ## Status
 
 **Under construction.** The application and its documentation are experimental
 and may change. The project is not open for contributions at this stage.
-Live target connectivity and MCP integration are not implemented.
+The local Python web adapter supports Live connections and Replay. Live hardware
+support requires the appropriate probe tools/drivers and hardware validation;
+MCP integration is not implemented.
 
 ## Current capabilities
 
@@ -23,7 +25,21 @@ Live target connectivity and MCP integration are not implemented.
   work queues, and heaps.
 - Time-history charts, work queue activity, and captured heap fragmentation maps.
 - One shared Rust UI for native and WebAssembly builds. The browser accepts
-  already-decoded JSON only; recording/ELF decoding remains native-only.
+  already-decoded JSON without a Python backend. An experimental
+  [Python session adapter](web-ui/README.md) streams live target measurements or
+  decoded recordings into that browser UI through HTTP commands and WebSocket events.
+- The adapter UI has persistent top-right session controls, with editable
+  Live/Replay settings, explicit Connect/Disconnect/Reconnect, and observed live
+  samples/s (successful frames received by the adapter). Build directories
+  supply board/image/ELF context; Git details are labelled as checkout metadata,
+  not proof of the firmware's build revision.
+- Connection actions have labelled icons. A green circle means fresh frames are
+  arriving; busy, waiting/warning, failed and disconnected states have distinct
+  indicators and text, not color alone.
+- Opening Live heap details requests one heap's fragmentation map on demand.
+  One controlling tab selects only the groups and rows shown by its screen.
+  Leaving heap details releases map demand. Acquisition periods are configurable;
+  default map capture includes a one-second cooldown.
 
 ## Quick start
 
