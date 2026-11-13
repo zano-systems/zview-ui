@@ -59,6 +59,8 @@ impl ThreadsApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let queue = key.in_frame(&self.frames[self.frame]);
+        let (history, current) =
+            self.history_frames(crate::live_history::Key::MessageQueue(key.clone()));
         let waiters = queue.and_then(|queue| queue.object.waiters.as_deref());
         let full = queue.is_some_and(|queue| {
             matches!((queue.used_msgs, queue.max_msgs), (Some(u), Some(n)) if n > 0 && u >= n)
@@ -70,7 +72,7 @@ impl ThreadsApp {
         } else {
             GREEN
         };
-        let (series, maximum) = depth_history(&self.frames, self.frame, key);
+        let (series, maximum) = depth_history(&history, current, key);
         let series = series.with_playhead(self.playback_time(cx));
         let caption = series.caption.clone();
         let scale = match queue.and_then(|queue| queue.max_msgs) {

@@ -199,11 +199,60 @@ Live heap statistics are available when supported. Fragmentation maps are reques
 only while a browser is inspecting a heap, as described in Phase 4 below.
 Unavailable measurements remain unknown, not zero.
 
-The newest received sample is always followed. The last 256 frames of the current
-view are retained; changing acquisition selection starts a new visible history.
-Live chart axes use monotonic elapsed **adapter receipt time**, not the board's
-clock or original recording time; timestamps do not restart when history rolls
-over. Live Play/Pause/Previous/Next/Restart controls are unavailable.
+The newest received sample is always followed. Tables/details keep only the latest
+full Live frame; charts retain **five minutes by elapsed time for the current
+screen visit**, not a fixed number of frames. Entering a screen starts fresh: zero
+is its first valid reading, not the session's start. Returning to that screen
+starts a new visit rather than restoring its earlier curve.
+
+The default visible window is **20 seconds**. It initially grows from zero with
+the collected observations, then rolls forward. The footer's **Window** slider
+selects **1–300 seconds** for all Live charts on the screen, including the work-queue
+activity strip. Short windows have finer pointer control using a logarithmic track.
+The duration readout appears once, after the slider; clicking it restores 20 seconds.
+With the control focused, arrow keys change
+one second, Page Up/Down change ten, and Home/End select the bounds.
+
+Changing the slider resets individual chart zoom/pan to follow the selected window.
+Wheel zoom can still inspect an individual chart more closely, **Fit history** shows
+retained history, and **Last Ns** restores the selected slider duration. Neither the
+slider nor zoom changes acquisition or deletes retained observations. The selected
+duration remains while navigating screens; page reload restores the 20-second default.
+
+Chart storage is separate from full snapshots. Per-object correlated measurements
+(including ownership/state needed by tooltips), overview metrics and fragmentation
+measurements use change logs: repeated values advance the last confirmed observation
+time without allocating another historical sample. Both the first and last actual
+observation in an unchanged run remain available for drawing, so compressing a
+flat run does not shift a later rise or fall earlier in time. Large heap chunk maps are not
+copied into statistical history. The latest map remains separately retained.
+
+Leaving a screen discards its visit's chart history. A read warning or a transport
+interruption within the same visit ends confirmed coverage; charts do not bridge
+those gaps or substitute zero. A constant value means unchanged at the observations,
+not proof that no operations occurred between reads.
+
+Live percentage charts (including fragmentation) connect actual readings with
+straight lines, not stairs or smoothed/generated samples. Counts and categorical
+states keep their sample-and-hold steps. Acquisition cadence remains independent
+of storage and zoom: a slow map period/cooldown cannot capture fast transitions.
+Dense numeric charts draw per-pixel minimum/maximum envelopes so spikes do not
+disappear into averages. Zooming in reveals exact transitions; hover always queries
+the retained observations, not an invented averaged sample. Mutex/semaphore
+companion state stays timestamp-aligned. The work-queue busy estimate remains
+time-weighted; change intervals are not mislabelled as polling cadence.
+
+A conservative **16 MiB accounting budget for chart history** is a safety bound,
+not a limit on total browser memory. Rapidly changing data may reach it before five
+minutes: oldest coverage is then removed without averaging, and the footer/captions
+explicitly report the shortened history. Full-resolution data already discarded
+cannot be recovered by zooming. History is local to each browser tab and resets
+on page reload or a new session; it is not recording-to-disk.
+
+Live chart axes use monotonic elapsed **adapter receipt time relative to the
+current visit**, not the board's clock or original recording time. They restart
+on entering a screen, not when the rolling time window expires.
+Live Play/Pause/Previous/Next/Restart controls are unavailable.
 Previous data is never relabelled as a newly selected target while it connects
 or fails; a notice identifies the retained display until a valid new frame arrives.
 

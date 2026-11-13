@@ -176,6 +176,24 @@ impl StepAreaChart {
     ) {
         let sign = if negative { -1. } else { 1. };
         let zero = g.y(0.);
+        if let Some(buckets) = series.envelopes(g.width.ceil() as usize) {
+            for bucket in buckets.into_iter().flatten() {
+                let x = g.x(bucket.start, series.x_domain);
+                let mut path = PathBuilder::stroke(px(2.));
+                path.move_to(bounds.origin + point(x, g.y(sign * bucket.minimum)));
+                path.line_to(bounds.origin + point(x, g.y(sign * bucket.maximum)));
+                if !bucket.has_gap && bucket.minimum == bucket.maximum {
+                    path.line_to(
+                        bounds.origin
+                            + point(g.x(bucket.end, series.x_domain), g.y(sign * bucket.maximum)),
+                    );
+                }
+                if let Ok(path) = path.build() {
+                    window.paint_path(path, rgb(if negative { WAITERS } else { TOKENS }));
+                }
+            }
+            return;
+        }
         for index in series.visible_range() {
             let a = &series.points[index];
             let Some(end_time) = series.interval_end(index) else {
@@ -202,7 +220,11 @@ impl StepAreaChart {
             {
                 window.paint_path(path, rgb(self.sample_color(index, negative, value)));
             }
-            if let Some(next) = series.points.get(index + 1).and_then(|b| b.value)
+            if series
+                .points
+                .get(index + 1)
+                .is_some_and(|p| p.x <= end_time)
+                && let Some(next) = series.points.get(index + 1).and_then(|b| b.value)
                 && next != value
                 && (negative || self.upper_connects(index + 1))
             {
@@ -235,10 +257,14 @@ impl StepAreaChart {
 impl RenderOnce for StepAreaChart {
     fn render(mut self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let state = crate::chart_zoom::state(self.id, window, cx);
+        if let Some(live) = &self.tokens.live {
+            state.update(cx, |zoom, _| zoom.sync_window(live.window));
+        }
         let domain = state.read(cx).domain(&self.tokens);
         self.tokens.x_domain = domain;
         self.waiters.x_domain = domain;
-        crate::chart_zoom::wrap(self.id, state, PlotElement::new(self), window, cx)
+        let live = self.tokens.live.is_some();
+        crate::chart_zoom::wrap(self.id, state, PlotElement::new(self), live, window, cx)
     }
 }
 
@@ -295,8 +321,10 @@ impl Plot for StepAreaChart {
             |window| {
                 self.paint_series(&self.tokens, false, g, bounds, window);
                 self.paint_series(&self.waiters, true, g, bounds, window);
+                let dense = self.tokens.live.is_some()
+                    && self.tokens.visible_range().len() > g.width.ceil() as usize * 2;
                 // Show status on zero only when the wait queue is known empty.
-                for index in self.tokens.visible_range() {
+                for index in self.tokens.visible_range().filter(|_| !dense) {
                     let sample = &self.tokens.points[index];
                     let Some(end_time) = self.tokens.interval_end(index) else {
                         continue;
@@ -316,14 +344,20 @@ impl Plot for StepAreaChart {
                     }
                 }
                 // Mark an exact-time handoff without implying continuous recursion.
-                for (index, changed) in self.upper_breaks.iter().enumerate() {
-                    if !changed {
+                let mut marked = vec![false; (g.width.ceil() as usize).clamp(1, 8192)];
+                for index in self.tokens.visible_range() {
+                    if !self.upper_breaks.get(index).copied().unwrap_or(false) {
                         continue;
                     }
                     let Some(sample) = self.tokens.points.get(index) else {
                         continue;
                     };
                     let x = g.x(sample.x, self.tokens.x_domain);
+                    let column = ((x.as_f32() - g.left).max(0.) as usize).min(marked.len() - 1);
+                    if marked[column] {
+                        continue;
+                    }
+                    marked[column] = true;
                     let mut y = g.top;
                     while px(y) < g.y(0.) {
                         let mut dash = PathBuilder::stroke(px(1.));

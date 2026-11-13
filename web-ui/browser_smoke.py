@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import json
+import math
 import shutil
 import tempfile
 import threading
@@ -455,13 +456,54 @@ async def check_live(page, live, screenshot, sockets, dialogs):
         assert "J-Link" in opened["session_labels"][1], opened
         assert "Last sample" not in " ".join(opened["session_labels"]), opened
         full = await wait_state(page, lambda s: s["frames_received"] == 300,
-                                "bounded live history", timeout=40)
-        assert full["buffered_frames"] == 256, full
+                                "time-based compressed live history", timeout=40)
+        assert full["buffered_frames"] == 1, full
+        assert 25 < full["history_seconds"] <= 29.9, full
+        assert abs(full["history_seconds"] - (full["live_elapsed"] - full["history_origin"])) < 1e-9, full
+        assert full["history_changes"] < 30, full
+        assert full["history_bytes"] < 64 * 1024, full
         assert abs(full["live_elapsed"] - 29.9) < 1e-9, full
         assert full["samples_per_second"] == 9.8, full
         assert full["visible_threads"] == 2, full
         assert live.calls == 1
         assert full["indicator"] == "healthy", full
+        assert full["window_seconds"] == 20, full
+        bounds = full["window_slider_bounds"]
+        assert bounds["width"] > 0, bounds
+        # The native GPUI slider uses a logarithmic track for 1–300 seconds.
+        await page.mouse.click(bounds["x"] + bounds["width"] * math.log(5) / math.log(300),
+                               bounds["y"] + bounds["height"] / 2)
+        selected = await wait_state(page, lambda s: s["window_seconds"] == 5, "actual time-window slider")
+        assert selected["history_changes"] == full["history_changes"], selected
+        assert selected["history_seconds"] == full["history_seconds"], selected
+        await page.wait_for_timeout(150)
+        if screenshot:
+            await page.screenshot(path=str(Path(screenshot).with_name("live-window-slider.png")), full_page=True)
+        await page.keyboard.press("ArrowRight")
+        await wait_state(page, lambda s: s["window_seconds"] == 6, "slider keyboard increment")
+        await page.keyboard.press("Home")
+        await wait_state(page, lambda s: s["window_seconds"] == 1, "slider keyboard minimum")
+        await page.keyboard.press("End")
+        await wait_state(page, lambda s: s["window_seconds"] == 300, "slider keyboard maximum")
+        await page.mouse.click(bounds["x"] + bounds["width"] + 32,
+                               bounds["y"] + bounds["height"] / 2)
+        reset_window = await wait_state(page, lambda s: s["window_seconds"] == 20, "reset selected window")
+        assert reset_window["history_bytes"] == full["history_bytes"], reset_window
+        assert live.calls == 1, "Window changes must not restart acquisition."
+        # The actual GPUI wheel/fit controls only change the viewport. Repeated
+        # source readings and zooming must not allocate or discard chart history.
+        await page.mouse.move(430, 330)
+        await page.mouse.wheel(0, -300)
+        await page.wait_for_timeout(150)
+        zoomed = await state(page)
+        assert zoomed["history_seconds"] == full["history_seconds"], zoomed
+        assert zoomed["history_changes"] == full["history_changes"], zoomed
+        assert zoomed["history_bytes"] == full["history_bytes"], zoomed
+        if screenshot:
+            await page.screenshot(path=str(Path(screenshot).with_name("live-history-zoom.png")),
+                                  full_page=True)
+        await page.mouse.click(592, 289)  # Fit retained history.
+        await page.mouse.click(445, 289)  # Follow the selected time window again.
         await page.mouse.click(100, 180)
         await wait_state(page, lambda s: s["screen"] == "KernelObjects" and not s["view_loading"],
                          "kernel objects with header controls")
@@ -470,7 +512,9 @@ async def check_live(page, live, screenshot, sockets, dialogs):
         await page.keyboard.press("Escape")
         await wait_state(page, lambda s: not s["dialog_open"], "kernel configuration dismissal")
         await page.mouse.click(100, 147)
-        await wait_state(page, lambda s: s["screen"] == "Overview" and not s["view_loading"], "return to Threads")
+        returned = await wait_state(page, lambda s: s["screen"] == "Overview" and not s["view_loading"], "return to Threads")
+        assert returned["history_origin"] > full["history_origin"], returned
+        assert returned["history_seconds"] < 1, returned
         before_warning = await state(page)
         live.warning.set()
         await wait_state(page, lambda s: s["indicator"] == "warning", "amber read warning")
@@ -508,7 +552,7 @@ async def check_live(page, live, screenshot, sockets, dialogs):
         reconnected = await wait_state(page, lambda s: s["session_id"] != opened["session_id"]
                                        and s["status"] == "reading", "explicit target reconnect")
         assert live.calls == 2
-        assert reconnected["buffered_frames"] < 256, reconnected
+        assert reconnected["buffered_frames"] == 1, reconnected
         await click_header(page, primary=True)
         stopped = await wait_state(page, lambda s: s["status"] == "stopped", "live disconnect")
         assert stopped["samples_per_second"] is None, stopped
@@ -563,6 +607,7 @@ async def check_live(page, live, screenshot, sockets, dialogs):
         )
         assert restored["session_id"] == next_map["session_id"], restored
         assert live.calls == calls, "Browser reconnect opened another acquisition worker."
+        assert restored["history_origin"] == next_map["history_origin"], restored
         await page.keyboard.press("Escape")
         released = await wait_state(page, lambda s: s["screen"] == "KernelObjects" and s["heap_capture"] is None,
                                     "leaving heap details releases capture")
@@ -570,6 +615,16 @@ async def check_live(page, live, screenshot, sockets, dialogs):
         after = await state(page)
         assert after["frames_received"] > released["frames_received"], after
         assert after["heap_map_frame"] == released["heap_map_frame"], after
+        await page.mouse.click(480, 358)
+        reopened = await wait_state(page, lambda s: s["screen"].startswith("Heap(")
+                                   and (s["displayed_heap_map_chunks"] or 0) > 0
+                                   and not s["view_loading"], "new heap visit starts fresh")
+        assert reopened["history_origin"] > restored["history_origin"], reopened
+        assert reopened["history_seconds"] < 1, reopened
+        if screenshot:
+            await page.screenshot(path=str(Path(screenshot).with_name("heap-new-visit.png")), full_page=True)
+        await page.keyboard.press("Escape")
+        await wait_state(page, lambda s: s["heap_capture"] is None, "release reopened heap")
         await click_header(page, primary=True)
         await wait_state(page, lambda s: s["status"] == "stopped", "stop after heap capture")
 
@@ -667,7 +722,7 @@ async def check(executable_path=None, screenshot=None):
                       "two tabs, reconnect, failure/retry, stop/restart, header controls, "
                       "keyboard apply/cancel, build context, stale-preview cancellation, "
                       "reload, collapsed-sidebar controls, native-picker bridge (scripted OS boundary), "
-                      "keyboard tabs, live Connect/loss/reconnect, bounded live history, "
+                      "keyboard tabs, live Connect/loss/reconnect, time-based compressed live history, "
                       "green/amber/red/gray status, freshness expiry, sampling labels without sample age and minimum viewport. "
                       "Live heap detail entry, scheduled maps, interest restored after stream reconnect "
                       "without another acquisition worker, screen-scoped selection and release on navigation. "

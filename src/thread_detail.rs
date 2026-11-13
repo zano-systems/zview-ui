@@ -12,6 +12,7 @@ impl ThreadsApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let thread = key.in_frame(&self.frames[self.frame]);
+        let (history, current) = self.history_frames(crate::live_history::Key::Thread(key.clone()));
         let runtime = thread.and_then(|t| t.runtime.as_ref());
         let watermark = runtime.and_then(|r| r.stack_watermark_percent);
         let stack_color = if watermark.is_some_and(|v| v >= 70.) {
@@ -67,7 +68,7 @@ impl ThreadsApp {
                         "thread-cpu", "CPU %",
                         runtime.and_then(|r| r.cpu_normalized),
                         "Thread cycles / total cycles".into(), PURPLE,
-                        model::chart_series(&self.frames, self.frame, |frame| {
+                        model::chart_series(&history, current, |frame| {
                             key.in_frame(frame)?.runtime.as_ref()?.cpu_normalized
                         }).with_playhead(self.playback_time(cx)), None,
                     ).h_auto())
@@ -75,7 +76,7 @@ impl ThreadsApp {
                         "thread-load", "LOAD %",
                         runtime.and_then(|r| r.cpu),
                         "Thread cycles / non-idle cycles".into(), BLUE,
-                        model::chart_series(&self.frames, self.frame, |frame| {
+                        model::chart_series(&history, current, |frame| {
                             key.in_frame(frame)?.runtime.as_ref()?.cpu
                         }).with_playhead(self.playback_time(cx)), None,
                     ).h_auto()),

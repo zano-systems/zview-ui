@@ -271,14 +271,16 @@ impl ThreadsApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let queue = key.in_frame(&self.frames[self.frame]);
+        let (history, current) =
+            self.history_frames(crate::live_history::Key::WorkQueue(key.clone()));
         let pending = queue.and_then(|queue| queue.pending.as_deref());
         let truncated = queue.is_some_and(|queue| queue.pending_truncated);
         let waiters = queue.and_then(|queue| queue.object.waiters.as_deref());
         let state = Activity::from_queue(queue);
         let pressure = Pressure::from_queue(queue);
-        let busy = workq_activity::observed_busy(&self.frames, self.frame, key);
+        let busy = workq_activity::observed_busy(&history, current, key);
         let busy_percent = busy.percent();
-        let (series, maximum) = backlog_history(&self.frames, self.frame, key);
+        let (series, maximum) = backlog_history(&history, current, key);
         let series = series.with_playhead(self.playback_time(cx));
         div().id("workq-detail").debug_selector(|| "workq-detail".into())
             .flex().flex_col().flex_1().min_h_0().gap_2()
@@ -316,7 +318,7 @@ impl ThreadsApp {
                             .when(pending.is_some_and(|p|!p.is_empty()),|el|el.text_color(rgb(BACKLOG)))
                             .child(pending.map(|p|format!("{}{}",p.len(),if truncated {"+"}else{""})).unwrap_or_else(||"—".into())))
                         .child(crate::layout::note("workq-pending-note","Excludes the executing work item")))))
-            .child(workq_activity::view(&self.workq_activity_states,key,workq_activity::History::new(&self.frames,self.frame,key),window,cx))
+            .child(workq_activity::view(&self.workq_activity_states,key,workq_activity::History::new(&history,current,key),window,cx))
             .child(div().debug_selector(||"workq-lower-panels".into()).flex().flex_1().min_h_0().gap_3()
                 .child(weighted_panel(3.,div().debug_selector(|| "workq-history".into()).flex_1().min_w_0().min_h_0()
                     .p_3().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD)).flex().flex_col().gap_2()

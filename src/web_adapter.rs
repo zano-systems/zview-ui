@@ -26,7 +26,8 @@ pub(super) struct Controls {
     pub available: bool,
     pub state: ClientState,
     displayed: Option<(String, u64)>,
-    displayed_view: Option<LiveView>,
+    history_view: Option<LiveView>,
+    history_screen: Option<Screen>,
     last_frame_received: Option<(web_time::Instant, f64)>,
     client_id: Option<String>,
     view_interest: ViewInterest,
@@ -50,7 +51,8 @@ impl Controls {
             available: false,
             state: ClientState::default(),
             displayed: None,
-            displayed_view: None,
+            history_view: None,
+            history_screen: None,
             last_frame_received: None,
             client_id: None,
             view_interest: ViewInterest::default(),
@@ -110,6 +112,9 @@ impl ThreadsApp {
         {
             return false;
         }
+        if self.live_history.is_empty() {
+            return true;
+        }
         let Some(view) = &session.live_view else {
             return true;
         };
@@ -155,6 +160,14 @@ impl ThreadsApp {
             })
             .map(|session| session.id.as_str());
         self.adapter.view_interest.bind(binding);
+        if self.adapter.state.is_live() {
+            let desired = self.desired_live_view(cx);
+            if self.adapter.history_screen.as_ref() != Some(&self.screen) {
+                self.live_history.clear();
+                self.adapter.history_screen = Some(self.screen.clone());
+            }
+            self.adapter.history_view = Some(desired);
+        }
         let Some(session) = self.adapter.state.session.as_ref() else {
             return;
         };
@@ -242,11 +255,12 @@ impl ThreadsApp {
         {
             return None;
         }
-        session
-            .heap_detail
-            .last_map
-            .as_ref()
-            .filter(|map| map.heap.address == key.address && map.heap.name == key.name)
+        let origin = self.live_history.origin()?;
+        session.heap_detail.last_map.as_ref().filter(|map| {
+            map.heap.address == key.address
+                && map.heap.name == key.name
+                && map.live_elapsed >= origin
+        })
     }
 
     pub(crate) fn live_heap_note(&self, key: &model::HeapKey) -> Option<String> {
@@ -275,8 +289,8 @@ impl ThreadsApp {
         }
         if let Some(map) = self.live_heap_map(key) {
             return Some(format!(
-                "Last captured map at {:.2}s · {} Read time limits the achieved rate.",
-                map.live_elapsed,
+                "Last captured map at {:.2}s since opening this view · {} Read time limits the achieved rate.",
+                map.live_elapsed - self.live_history.origin().unwrap_or(map.live_elapsed),
                 session
                     .timing
                     .as_ref()
@@ -355,11 +369,19 @@ impl ThreadsApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Result<(), String> {
+        let interrupted = matches!(
+            &message.event,
+            Event::Notice { .. } | Event::View(_) | Event::Status(_)
+        );
         if !self.adapter.state.accept(message)? {
             return Ok(());
         }
+        if interrupted {
+            self.live_history.interrupt();
+        }
         if let Some(session) = &self.adapter.state.session {
             let key = (session.id.clone(), session.frames_received);
+            let is_live = session.mode() == Mode::Live;
             if let Some(frame) = &session.last_frame
                 && self.adapter.displayed.as_ref() != Some(&key)
             {
@@ -382,10 +404,13 @@ impl ThreadsApp {
                     .map(|now| (now.as_secs_f64() - frame.decoded_at).max(0.))
                     .unwrap_or(f64::NAN);
                 let received_view = frame.view.clone();
+                let overview = matches!(&received_view, None | Some(LiveView::Overview { .. }));
                 if new_session {
                     let recording_elf = (session.mode() == Mode::Replay).then_some(elf);
                     self.install(frames, source, recording_elf, window, cx);
-                } else if self.adapter.displayed_view != received_view {
+                    self.adapter.history_view = None;
+                    self.adapter.history_screen = None;
+                } else if is_live {
                     self.pause(cx);
                     self.frames = frames;
                     self.frame = 0;
@@ -407,9 +432,14 @@ impl ThreadsApp {
                     self.frame = self.frames.len() - 1;
                     self.sync_heaps(window, cx);
                 }
+                if is_live
+                    && self.adapter.history_view.is_some()
+                    && self.adapter.history_view == received_view
+                {
+                    self.live_history.record(&self.frames[self.frame], overview);
+                }
                 self.adapter.last_frame_received = Some((web_time::Instant::now(), source_age));
                 self.adapter.displayed = Some(key);
-                self.adapter.displayed_view = received_view;
             }
         }
         self.error = self.adapter.state.error.clone();
@@ -527,6 +557,7 @@ pub fn connect_adapter() {
                 this.adapter.state.connection = Connection::Retrying;
                 this.adapter.client_id = None;
                 this.adapter.view_interest.reset();
+                this.live_history.interrupt();
                 cx.notify();
             });
             TimeoutFuture::new(1500).await;
@@ -580,6 +611,10 @@ pub fn adapter_state() -> Result<String, JsValue> {
             "session_id": adapter.state.session.as_ref().map(|s| &s.id),
             "frames_received": adapter.state.session.as_ref().map(|s| s.frames_received),
             "buffered_frames": this.frames.len(),
+            "history_changes": this.live_history.changes(),
+            "history_bytes": this.live_history.bytes(),
+            "history_seconds": this.live_history.retained_seconds(),
+            "history_label": this.live_history.label(),
             "heap_capture": adapter.state.session.as_ref().and_then(|s| s.heap_detail.heap.as_ref()),
             "heap_map_chunks": adapter.state.session.as_ref().and_then(|s| s.heap_detail.last_map.as_ref()).map(|m| m.chunks.len()),
             "displayed_heap_map_chunks": match &this.screen {
@@ -609,6 +644,15 @@ pub fn adapter_state() -> Result<String, JsValue> {
             "draft_request": adapter.draft.open.then(|| adapter.draft.request(cx)),
             "draft_recording": adapter.draft.recording_path(cx),
             "native_picker": adapter.draft.picker,
+        });
+        state["history_origin"] = json!(this.live_history.origin());
+        state["history_view"] = json!(adapter.history_view);
+        state["window_seconds"] = json!(this.chart_window.seconds);
+        state["window_revision"] = json!(this.chart_window.revision);
+        let slider = this.window_slider.read(cx).bounds();
+        state["window_slider_bounds"] = json!({
+            "x": slider.left().as_f32(), "y": slider.top().as_f32(),
+            "width": slider.size.width.as_f32(), "height": slider.size.height.as_f32(),
         });
         state["draft_advanced"] = json!(adapter.draft.advanced);
         state["view_loading"] = json!(this.live_view_loading(cx));

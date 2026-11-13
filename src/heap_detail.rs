@@ -56,6 +56,7 @@ impl ThreadsApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let heap = key.in_frame(&self.frames[self.frame]);
+        let (history, current) = self.history_frames(crate::live_history::Key::Heap(key.clone()));
         let waiters = heap.and_then(|h| h.waiters.as_deref());
         let fill = heap.and_then(|h| h.percent());
         let color = if heap.is_some_and(|h| h.total() > 0 && h.free_bytes == 0) {
@@ -65,7 +66,7 @@ impl ThreadsApp {
         } else {
             GREEN
         };
-        let (series, maximum) = usage_history(&self.frames, self.frame, key);
+        let (series, maximum) = usage_history(&history, current, key);
         let series = series.with_playhead(self.playback_time(cx));
         let caption = series.caption.clone();
         let chunks = heap.and_then(|h| h.chunks.as_deref());
@@ -88,10 +89,17 @@ impl ThreadsApp {
         let fragmentation = chunks
             .and_then(ChunkMap::new)
             .map(|map| map.fragmentation());
-        let fragmentation_series = fragmentation_history(&self.frames, self.frame, key)
-            .with_playhead(self.playback_time(cx));
+        let fragmentation_series = if self.frames[self.frame].is_live {
+            self.live_history
+                .fragmentation(key)
+                .with_live_window(self.chart_window)
+        } else {
+            fragmentation_history(&self.frames, self.frame, key)
+        }
+        .with_playhead(self.playback_time(cx));
         div().id("heap-detail").debug_selector(|| "heap-detail".into())
             .flex().flex_col().flex_1().min_h_0().gap_3()
+            .when(self.frames[self.frame].is_live, |el| el.gap_2())
             .child(div().flex().flex_shrink_0().items_center().justify_between().flex_wrap().gap_3()
                 .child(div().text_lg().font_semibold().child("Heap details"))
                 .child(div().debug_selector(|| "back-to-objects".into()).child(

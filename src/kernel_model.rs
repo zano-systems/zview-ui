@@ -2,14 +2,14 @@
 use crate::model::{Frame, percentage};
 use serde::Deserialize;
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Object {
     pub address: u64,
     pub name: String,
     pub waiters: Option<Vec<String>>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Semaphore {
     #[serde(flatten)]
     pub object: Object,
@@ -18,7 +18,7 @@ pub struct Semaphore {
 }
 
 /// Static objects are matched by address and name, never by filtered row index.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct SemaphoreKey {
     pub address: u64,
     pub name: String,
@@ -50,7 +50,7 @@ impl Semaphore {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Mutex {
     #[serde(flatten)]
     pub object: Object,
@@ -59,7 +59,7 @@ pub struct Mutex {
     pub owner_name: Option<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MutexKey {
     pub address: u64,
     pub name: String,
@@ -107,7 +107,7 @@ impl Mutex {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct MessageQueue {
     #[serde(flatten)]
     pub object: Object,
@@ -116,7 +116,7 @@ pub struct MessageQueue {
     pub msg_size: Option<u64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MessageQueueKey {
     pub address: u64,
     pub name: String,
@@ -131,7 +131,7 @@ impl MessageQueueKey {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct MemorySlab {
     #[serde(flatten)]
     pub object: Object,
@@ -141,7 +141,7 @@ pub struct MemorySlab {
     pub max_used: Option<u64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MemorySlabKey {
     pub address: u64,
     pub name: String,
@@ -156,7 +156,7 @@ impl MemorySlabKey {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct WorkQueue {
     #[serde(flatten)]
     pub object: Object,
@@ -167,7 +167,7 @@ pub struct WorkQueue {
     pub pending_truncated: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct WorkQueueKey {
     pub address: u64,
     pub name: String,
