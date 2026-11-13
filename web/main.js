@@ -1,4 +1,4 @@
-import init, { start, load_json, show_file_error } from "./pkg/zview_desktop.js";
+import init, { start, load_json, show_file_error, connect_adapter } from "./pkg/zview_desktop.js";
 import { createDocumentLoader } from "./documents.mjs";
 
 const status = document.querySelector("#status");
@@ -74,6 +74,7 @@ try {
     }
     return null;
   });
+  connect_adapter();
   // Signals host startup, not proof that the GPU has finished its first frame.
   document.documentElement.dataset.zviewReady = "true";
 } catch (error) {

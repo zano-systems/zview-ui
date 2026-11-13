@@ -24,5 +24,6 @@ rustc-ice-*.txt
 #.idea/
 /local/
 /.venv/
+/.venv-web/
 __pycache__/
 *.pyc

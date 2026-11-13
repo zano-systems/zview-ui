@@ -1,5 +1,5 @@
-//! Session controls live in one dropdown on every screen.
-//! Only offline sources are supported until the live backend contract is agreed.
+//! Legacy file-source menu for native/static hosts.
+//! Python adapter sessions use the sidebar card and configuration dialog.
 use crate::{ThreadsApp, layout};
 use gpui_kit::{
     component::{
@@ -13,16 +13,24 @@ use gpui_kit::{
 
 impl ThreadsApp {
     pub(crate) fn session_menu(&self, cx: &Context<Self>) -> impl IntoElement {
+        #[cfg(target_family = "wasm")]
+        let label = if self.adapter.available {
+            "Replay"
+        } else {
+            "Offline"
+        };
+        #[cfg(not(target_family = "wasm"))]
+        let label = "Offline";
         let app = cx.entity().downgrade();
         div()
             .debug_selector(|| "session-menu-trigger".into())
             .flex_shrink_0()
             .child(
                 Button::new("session-menu")
-                    .label("Offline")
+                    .label(label)
                     .icon(Icon::new(assets::IconName::CircleDashed))
                     .dropdown_caret(true)
-                    .accessibility_label("Offline session menu")
+                    .accessibility_label(format!("{label} session menu"))
                     .tooltip("Session source and actions")
                     .dropdown_menu_with_anchor(Anchor::TopRight, move |menu, _, cx| {
                         let Some(view) = app.upgrade() else {
@@ -31,6 +39,9 @@ impl ThreadsApp {
                         // Read when opened, not when the toolbar was rendered.
                         let state = view.read(cx);
                         let loading = state.loading.is_some();
+                        let can_open_dump = !loading;
+                        #[cfg(target_family = "wasm")]
+                        let can_open_dump = can_open_dump && !state.adapter.available;
                         #[cfg(not(target_family = "wasm"))]
                         let can_reload = state.source.is_some() && !loading;
                         let kind = if state.recording_elf.is_some() {
@@ -39,6 +50,12 @@ impl ThreadsApp {
                             "Offline · Dump"
                         } else {
                             "Offline · Bundled sample"
+                        };
+                        #[cfg(target_family = "wasm")]
+                        let kind = if state.adapter.available {
+                            "Replay · Python adapter"
+                        } else {
+                            kind
                         };
                         let source = state
                             .source
@@ -80,13 +97,15 @@ impl ThreadsApp {
                             .item(PopupMenuItem::new("Connect to target…").disabled(true))
                             .label("Live connection is not implemented yet.")
                             .separator()
-                            .item(PopupMenuItem::new("Open dump…").disabled(loading).on_click(
-                                move |event, window, cx| {
-                                    let _ = open_dump.update(cx, |app, cx| {
-                                        app.open(event, window, cx);
-                                    });
-                                },
-                            ));
+                            .item(
+                                PopupMenuItem::new("Open dump…")
+                                    .disabled(!can_open_dump)
+                                    .on_click(move |event, window, cx| {
+                                        let _ = open_dump.update(cx, |app, cx| {
+                                            app.open(event, window, cx);
+                                        });
+                                    }),
+                            );
                         #[cfg(not(target_family = "wasm"))]
                         let menu = menu
                             .item(
@@ -110,7 +129,11 @@ impl ThreadsApp {
                                     }),
                             );
                         #[cfg(target_family = "wasm")]
-                        let menu = menu.label("JSON only · Select a file again to reload.");
+                        let menu = menu.label(if state.adapter.available {
+                            "Use the sidebar session card to change sources."
+                        } else {
+                            "JSON only · Select a file again to reload."
+                        });
                         menu.when(loading, |menu| {
                             menu.separator()
                                 .item(PopupMenuItem::new("Cancel import").on_click(

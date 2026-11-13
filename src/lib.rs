@@ -1,3 +1,4 @@
+pub mod adapter_protocol;
 mod app_assets;
 mod chart_zoom;
 mod heap_detail;
@@ -21,6 +22,8 @@ mod time_series_chart;
 mod wait_queue;
 #[cfg(target_family = "wasm")]
 mod web;
+#[cfg(target_family = "wasm")]
+mod web_adapter;
 mod workq_activity;
 mod workq_detail;
 mod zoom_strip;
@@ -115,6 +118,54 @@ enum Screen {
 }
 
 impl Screen {
+    #[cfg(any(test, target_family = "wasm"))]
+    fn live_view(
+        &self,
+        heap: Option<adapter_protocol::HeapIdentity>,
+        kind: Option<kernel_model::Kind>,
+        query: String,
+    ) -> adapter_protocol::LiveView {
+        use adapter_protocol::{HeapIdentity as Identity, LiveView};
+        let row = |address, name: &str| Identity {
+            address,
+            name: name.to_owned(),
+        };
+        match self {
+            Self::Overview => LiveView::Overview { heap },
+            Self::Thread(key) => LiveView::Thread {
+                object: row(key.address, &key.name),
+            },
+            Self::KernelObjects => LiveView::Objects {
+                kind: kind.map(|kind| kind.group().to_owned()),
+                query,
+            },
+            Self::Heap(key) => LiveView::Detail {
+                group: "heaps".into(),
+                object: row(key.address, &key.name),
+            },
+            Self::Semaphore(key) => LiveView::Detail {
+                group: "semaphores".into(),
+                object: row(key.address, &key.name),
+            },
+            Self::MessageQueue(key) => LiveView::Detail {
+                group: "msgqs".into(),
+                object: row(key.address, &key.name),
+            },
+            Self::MemorySlab(key) => LiveView::Detail {
+                group: "mem_slabs".into(),
+                object: row(key.address, &key.name),
+            },
+            Self::Mutex(key) => LiveView::Detail {
+                group: "mutexes".into(),
+                object: row(key.address, &key.name),
+            },
+            Self::WorkQueue(key) => LiveView::Detail {
+                group: "workqs".into(),
+                object: row(key.address, &key.name),
+            },
+        }
+    }
+
     fn object_kind(&self) -> Option<kernel_model::Kind> {
         use kernel_model::Kind;
         match self {
@@ -173,6 +224,8 @@ struct ThreadsApp {
     object_search: Entity<InputState>,
     object_kind: Option<kernel_model::Kind>,
     _object_search_subscription: Subscription,
+    #[cfg(target_family = "wasm")]
+    adapter: web_adapter::Controls,
 }
 
 impl Drop for ThreadsApp {
@@ -256,6 +309,8 @@ impl ThreadsApp {
             object_search,
             object_kind: None,
             _object_search_subscription: object_search_subscription,
+            #[cfg(target_family = "wasm")]
+            adapter: web_adapter::Controls::new(window, cx),
         };
         app.sync_heaps(window, cx);
         app
@@ -268,6 +323,23 @@ impl ThreadsApp {
             .iter()
             .map(|h| h.label())
             .collect();
+        #[cfg(target_family = "wasm")]
+        let items = self
+            .adapter
+            .state
+            .session
+            .as_ref()
+            .filter(|session| session.mode() == adapter_protocol::Mode::Live)
+            .and_then(|session| session.inventory.as_ref())
+            .map(|inventory| {
+                inventory
+                    .get("heaps")
+                    .into_iter()
+                    .flatten()
+                    .map(|heap| format!("{} · {:#x}", heap.name, heap.address))
+                    .collect()
+            })
+            .unwrap_or(items);
         let index = old
             .and_then(|old| items.iter().position(|label| *label == old))
             .or_else(|| (!items.is_empty()).then_some(0));
@@ -445,6 +517,9 @@ impl ThreadsApp {
     }
 
     fn step(&mut self, forward: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.frames[self.frame].is_live {
+            return;
+        }
         self.pause(cx);
         self.playback_position = None;
         self.frame = if forward {
@@ -521,6 +596,9 @@ impl ThreadsApp {
     }
 
     fn toggle_playback(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.frames[self.frame].is_live {
+            return;
+        }
         if self.playing {
             self.pause(cx);
             cx.notify();
@@ -696,6 +774,42 @@ impl ThreadsApp {
             })
     }
 
+    fn uses_web_adapter(&self) -> bool {
+        #[cfg(target_family = "wasm")]
+        {
+            self.adapter.available
+        }
+        #[cfg(not(target_family = "wasm"))]
+        {
+            false
+        }
+    }
+
+    fn object_inventory_count(&self, kind: Option<kernel_model::Kind>) -> Option<usize> {
+        #[cfg(target_family = "wasm")]
+        if let Some(inventory) = self
+            .adapter
+            .state
+            .session
+            .as_ref()
+            .filter(|session| session.mode() == adapter_protocol::Mode::Live)
+            .and_then(|session| session.inventory.as_ref())
+        {
+            return Some(
+                inventory
+                    .iter()
+                    .filter(|(group, _)| {
+                        group.as_str() != "threads"
+                            && kind.is_none_or(|kind| kind.group() == group.as_str())
+                    })
+                    .map(|(_, rows)| rows.len())
+                    .sum(),
+            );
+        }
+        let _ = kind;
+        None
+    }
+
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let objects = kernel_model::rows(&self.frames[self.frame]);
         let in_objects = matches!(
@@ -716,6 +830,7 @@ impl ThreadsApp {
                     .iter()
                     .filter(|row| kind.is_none_or(|kind| row.kind == kind))
                     .count();
+                let count = self.object_inventory_count(kind).unwrap_or(count);
                 let selector = kind.map_or_else(
                     || "object-type-all".to_string(),
                     |kind| format!("object-type-{}", kind.label()),
@@ -741,36 +856,41 @@ impl ThreadsApp {
             .collapsed(self.collapsed)
             .collapsible(true)
             .header(
-                SidebarHeader::new().p_4().child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_3()
-                        .child(
-                            div()
-                                .size_9()
-                                .rounded_lg()
-                                .bg(rgb(0x7561cd))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child("Z"),
-                        )
-                        .when(!self.collapsed, |el| {
-                            el.child(
+                SidebarHeader::new()
+                    .p_4()
+                    .flex_col()
+                    .items_stretch()
+                    .gap_3()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(
                                 div()
+                                    .size_9()
+                                    .rounded_lg()
+                                    .bg(rgb(0x7561cd))
                                     .flex()
-                                    .flex_col()
-                                    .child(div().font_semibold().child("ZView"))
-                                    .child(
-                                        div()
-                                            .text_xs()
-                                            .text_color(rgb(MUTED))
-                                            .child("Zephyr runtime inspector"),
-                                    ),
+                                    .items_center()
+                                    .justify_center()
+                                    .child("Z"),
                             )
-                        }),
-                ),
+                            .when(!self.collapsed, |el| {
+                                el.child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .child(div().font_semibold().child("ZView"))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(rgb(MUTED))
+                                                .child("Zephyr runtime inspector"),
+                                        ),
+                                )
+                            }),
+                    ),
             )
             .child(
                 SidebarGroup::new("Monitor").child(
@@ -791,7 +911,8 @@ impl ThreadsApp {
                                 .click_to_open(true)
                                 .children(types)
                                 .suffix({
-                                    let count = objects.len();
+                                    let count =
+                                        self.object_inventory_count(None).unwrap_or(objects.len());
                                     move |_, _| {
                                         div()
                                             .debug_selector(|| "kernel-navigation".into())
@@ -824,28 +945,32 @@ impl ThreadsApp {
                     ),
                 ),
             )
-            .footer(SidebarFooter::new().p_4().when(!self.collapsed, |el| {
-                el.child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .text_xs()
-                        .text_color(rgb(MUTED))
-                        .child(if self.recording_elf.is_some() {
-                            "RECORDING SESSION"
-                        } else if self.source.is_some() {
-                            "DUMP SESSION"
-                        } else {
-                            "BUNDLED SAMPLE"
-                        })
-                        .child(format!(
-                            "Frame {} of {} · offline",
-                            self.frame + 1,
-                            self.frames.len()
-                        )),
-                )
-            }))
+            .footer(SidebarFooter::new().p_4().when(
+                !self.collapsed && !self.uses_web_adapter(),
+                |el| {
+                    let mode = "offline";
+                    el.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .text_xs()
+                            .text_color(rgb(MUTED))
+                            .child(if self.recording_elf.is_some() {
+                                "RECORDING SESSION"
+                            } else if self.source.is_some() {
+                                "DUMP SESSION"
+                            } else {
+                                "BUNDLED SAMPLE"
+                            })
+                            .child(format!(
+                                "Frame {} of {} · {mode}",
+                                self.frame + 1,
+                                self.frames.len()
+                            )),
+                    )
+                },
+            ))
     }
 
     fn chart_card(
@@ -1157,7 +1282,15 @@ impl Render for ThreadsApp {
             });
             window.request_animation_frame();
         }
-        self.sync_missing_notice(window, cx);
+        #[cfg(target_family = "wasm")]
+        self.sync_live_view(cx);
+        #[cfg(target_family = "wasm")]
+        let live_loading = self.live_view_loading(cx);
+        #[cfg(not(target_family = "wasm"))]
+        let live_loading = false;
+        if !live_loading {
+            self.sync_missing_notice(window, cx);
+        }
         let frame = &self.frames[self.frame];
         let selected = self.heap.read(cx).selected_value();
         let heap = frame.heaps.iter().find(|h| Some(&h.label()) == selected);
@@ -1231,6 +1364,7 @@ impl Render for ThreadsApp {
                                     .flex()
                                     .flex_1()
                                     .min_w_0()
+                                    .when(self.uses_web_adapter(), |el| el.min_w(px(180.)))
                                     .gap_4()
                                     .items_center()
                                     .child(
@@ -1243,9 +1377,15 @@ impl Render for ThreadsApp {
                                     )
                                     .child(self.breadcrumbs(cx)),
                             )
-                            .child(self.session_menu(cx)),
+                            .when(!self.uses_web_adapter(), |el| el.child(self.session_menu(cx)))
+                            .children({
+                                #[cfg(target_family = "wasm")]
+                                { self.adapter_session_controls(cx) }
+                                #[cfg(not(target_family = "wasm"))]
+                                { None::<AnyElement> }
+                            }),
                     )
-                    .when(self.screen == Screen::Overview, |el| {
+                    .when(self.screen == Screen::Overview && !live_loading, |el| {
                         el.child(
                             div()
                                 .flex()
@@ -1265,6 +1405,19 @@ impl Render for ThreadsApp {
                         el.child(div().p_3().flex_shrink_0().rounded_md().bg(rgb(0x492c3c))
                             .child(layout::note("session-error", error)))
                     })
+                    .children({
+                        #[cfg(target_family = "wasm")]
+                        { self.adapter_display_notice() }
+                        #[cfg(not(target_family = "wasm"))]
+                        { None::<AnyElement> }
+                    })
+                    .when(live_loading && self.screen != Screen::KernelObjects, |el| {
+                        #[cfg(target_family = "wasm")]
+                        { el.child(div().flex_1().min_h_0().p_4()
+                            .child(layout::note("live-view-loading", self.live_view_loading_note()))) }
+                        #[cfg(not(target_family = "wasm"))]
+                        { el }
+                    })
                     .when(self.loading.is_some(), |el| {
                         el.child(
                             div().debug_selector(|| "session-loading".into())
@@ -1281,7 +1434,7 @@ impl Render for ThreadsApp {
                     })
                     .when_some(
                         match &self.screen {
-                            Screen::Thread(key) => Some(key),
+                            Screen::Thread(key) if !live_loading => Some(key),
                             _ => None,
                         },
                         |el, key| el.child(self.thread_detail(key, cx)),
@@ -1291,47 +1444,47 @@ impl Render for ThreadsApp {
                     })
                     .when_some(
                         match &self.screen {
-                            Screen::Semaphore(key) => Some(key),
+                            Screen::Semaphore(key) if !live_loading => Some(key),
                             _ => None,
                         },
                         |el, key| el.child(self.semaphore_detail(key, cx)),
                     )
                     .when_some(
                         match &self.screen {
-                            Screen::MessageQueue(key) => Some(key),
+                            Screen::MessageQueue(key) if !live_loading => Some(key),
                             _ => None,
                         },
                         |el, key| el.child(self.msgq_detail(key, cx)),
                     )
                     .when_some(
                         match &self.screen {
-                            Screen::MemorySlab(key) => Some(key),
+                            Screen::MemorySlab(key) if !live_loading => Some(key),
                             _ => None,
                         },
                         |el, key| el.child(self.slab_detail(key, cx)),
                     )
                     .when_some(
                         match &self.screen {
-                            Screen::Mutex(key) => Some(key),
+                            Screen::Mutex(key) if !live_loading => Some(key),
                             _ => None,
                         },
                         |el, key| el.child(self.mutex_detail(key, cx)),
                     )
                     .when_some(
                         match &self.screen {
-                            Screen::WorkQueue(key) => Some(key),
+                            Screen::WorkQueue(key) if !live_loading => Some(key),
                             _ => None,
                         },
                         |el, key| el.child(self.workq_detail(key, window, cx)),
                     )
                     .when_some(
                         match &self.screen {
-                            Screen::Heap(key) => Some(key),
+                            Screen::Heap(key) if !live_loading => Some(key),
                             _ => None,
                         },
                         |el, key| el.child(self.heap_detail(key, window, cx)),
                     )
-                    .when(self.screen == Screen::Overview, |el| {
+                    .when(self.screen == Screen::Overview && !live_loading, |el| {
                         el.child(
                             div()
                                 .debug_selector(|| "overview-charts".into())
@@ -1431,7 +1584,10 @@ impl Render for ThreadsApp {
                                             .into()
                                     }),
                             )))
-                            .child(
+                            .when(frame.is_live, |el| el.child(layout::note(
+                                "live-history-status", "Live history · latest received sample",
+                            )))
+                            .when(!frame.is_live, |el| el.child(
                                 div()
                                     .flex()
                                     .flex_shrink_0()
@@ -1495,7 +1651,7 @@ impl Render for ThreadsApp {
                                                 this.step(true, window, cx)
                                             }))),
                                     ),
-                            ),
+                            )),
                     ),
             )
     }

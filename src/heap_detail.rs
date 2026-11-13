@@ -68,8 +68,24 @@ impl ThreadsApp {
         let (series, maximum) = usage_history(&self.frames, self.frame, key);
         let series = series.with_playhead(self.playback_time(cx));
         let caption = series.caption.clone();
-        let fragmentation = heap
-            .and_then(|h| h.chunks.as_deref())
+        let chunks = heap.and_then(|h| h.chunks.as_deref());
+        #[cfg(target_family = "wasm")]
+        let chunks = self
+            .live_heap_map(key)
+            .map(|map| map.chunks.as_slice())
+            .or(chunks);
+        #[cfg(target_family = "wasm")]
+        let map_frame = self
+            .live_heap_map(key)
+            .map(|map| map.frame_number as usize)
+            .unwrap_or(self.frame);
+        #[cfg(not(target_family = "wasm"))]
+        let map_frame = self.frame;
+        #[cfg(target_family = "wasm")]
+        let map_note = self.live_heap_note(key);
+        #[cfg(not(target_family = "wasm"))]
+        let map_note = None::<String>;
+        let fragmentation = chunks
             .and_then(ChunkMap::new)
             .map(|map| map.fragmentation());
         let fragmentation_series = fragmentation_history(&self.frames, self.frame, key)
@@ -97,7 +113,8 @@ impl ThreadsApp {
                     .child(div().text_xs().text_color(rgb(MUTED)).child(
                         fill.map(|v| format!("{v:.1}% allocated")).unwrap_or_else(|| "Usage ratio unavailable".into())))
                     .child(Progress::new("heap-capacity").value(fill.unwrap_or(0.) as f32).color(rgb(color)).h(px(6.)))))
-            .child(heap_map::view(&self.heap_map_states, key, heap.and_then(|h| h.chunks.as_deref()), self.frame, window, cx))
+            .when_some(map_note, |el, note| el.child(crate::layout::note("live-heap-map-status", note)))
+            .child(heap_map::view(&self.heap_map_states, key, chunks, map_frame, window, cx))
             .child(div().flex().flex_1().min_h_0().gap_3()
                 .child(div().debug_selector(|| "heap-history".into()).flex_1().min_w_0().min_h_0()
                     .p_3().rounded_lg().border_1().border_color(rgb(BORDER)).bg(rgb(CARD)).flex().flex_col().gap_1()

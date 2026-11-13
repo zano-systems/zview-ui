@@ -77,6 +77,11 @@ pub fn load_json(text: &str, name: &str) -> Result<(), JsValue> {
         model::parse(text)
     };
     update_view(|this, window, cx| {
+        if this.adapter.available {
+            this.error = Some("Use the sidebar session card to change the adapter session; open the JSON launcher for dumps.".into());
+            cx.notify();
+            return;
+        }
         match frames {
             Ok(frames) => this.install(frames, PathBuf::from(name), None, window, cx),
             Err(error) => this.error = Some(error),
@@ -95,7 +100,7 @@ pub fn show_file_error(message: &str) -> Result<(), JsValue> {
     })
 }
 
-fn update_view(
+pub(super) fn update_view(
     update: impl FnOnce(&mut ThreadsApp, &mut Window, &mut Context<ThreadsApp>),
 ) -> Result<(), JsValue> {
     APPLICATION.with(|slot| {

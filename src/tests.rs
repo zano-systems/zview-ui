@@ -13,6 +13,92 @@ mod session_tests;
 mod workq_activity_tests;
 
 #[test]
+fn screens_request_only_their_displayed_live_groups_and_rows() {
+    use crate::adapter_protocol::{HeapIdentity, LiveView};
+    use crate::kernel_model::*;
+    let object = HeapIdentity {
+        address: 4096,
+        name: "item".into(),
+    };
+    assert_eq!(
+        Screen::Overview.live_view(Some(object.clone()), None, "".into()),
+        LiveView::Overview {
+            heap: Some(object.clone())
+        }
+    );
+    for (screen, group) in [
+        (
+            Screen::Heap(crate::model::HeapKey {
+                address: 4096,
+                name: "item".into(),
+            }),
+            "heaps",
+        ),
+        (
+            Screen::Semaphore(SemaphoreKey {
+                address: 4096,
+                name: "item".into(),
+            }),
+            "semaphores",
+        ),
+        (
+            Screen::MessageQueue(MessageQueueKey {
+                address: 4096,
+                name: "item".into(),
+            }),
+            "msgqs",
+        ),
+        (
+            Screen::MemorySlab(MemorySlabKey {
+                address: 4096,
+                name: "item".into(),
+            }),
+            "mem_slabs",
+        ),
+        (
+            Screen::Mutex(MutexKey {
+                address: 4096,
+                name: "item".into(),
+            }),
+            "mutexes",
+        ),
+        (
+            Screen::WorkQueue(WorkQueueKey {
+                address: 4096,
+                name: "item".into(),
+            }),
+            "workqs",
+        ),
+    ] {
+        assert_eq!(
+            screen.live_view(None, None, "".into()),
+            LiveView::Detail {
+                group: group.into(),
+                object: object.clone()
+            }
+        );
+    }
+    assert_eq!(
+        Screen::KernelObjects.live_view(None, Some(Kind::Heap), "packet".into()),
+        LiveView::Objects {
+            kind: Some("heaps".into()),
+            query: "packet".into()
+        }
+    );
+    let frames = crate::model::parse(include_str!("../sample.json")).unwrap();
+    let thread = &frames[0].threads[0];
+    assert_eq!(
+        Screen::Thread(thread.key()).live_view(None, None, "".into()),
+        LiveView::Thread {
+            object: HeapIdentity {
+                address: thread.address,
+                name: thread.name.clone()
+            }
+        }
+    );
+}
+
+#[test]
 fn browser_help_only_describes_supported_file_actions() {
     let text = super::help_text(true);
     assert!(text.contains("already-decoded JSON"));

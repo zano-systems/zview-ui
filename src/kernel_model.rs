@@ -163,7 +163,7 @@ pub struct WorkQueue {
     pub flags: Option<u64>,
     pub thread_name: Option<String>,
     pub pending: Option<Vec<String>>,
-    #[serde(default)]
+    #[serde(default, alias = "is_pending_truncated")]
     pub pending_truncated: bool,
 }
 
@@ -210,6 +210,18 @@ impl Kind {
             Self::Mutex => "Mutex",
             Self::Semaphore => "Semaphore",
             Self::WorkQueue => "Work queue",
+        }
+    }
+
+    #[cfg(any(test, target_family = "wasm"))]
+    pub fn group(self) -> &'static str {
+        match self {
+            Self::Heap => "heaps",
+            Self::MemorySlab => "mem_slabs",
+            Self::MessageQueue => "msgqs",
+            Self::Mutex => "mutexes",
+            Self::Semaphore => "semaphores",
+            Self::WorkQueue => "workqs",
         }
     }
 }
@@ -654,6 +666,52 @@ mod tests {
             assert_eq!(row.waiters, None);
             assert!(!row.summary.contains("FREE"));
             assert!(!row.summary.contains("NOT STARTED"));
+        }
+    }
+
+    #[test]
+    fn work_queue_truncation_accepts_package_and_legacy_json_fields() {
+        for field in ["is_pending_truncated", "pending_truncated"] {
+            let frame = parse(
+                &json!({
+                    "threads": [],
+                    "workqs": [{
+                        "address": 1, "name": "queue", "flags": 1, "pending": ["handler"],
+                        field: true
+                    }]
+                })
+                .to_string(),
+            )
+            .unwrap()
+            .remove(0);
+            assert!(frame.workqs[0].pending_truncated);
+            assert!(find(&rows(&frame), Kind::WorkQueue).summary.contains("1+"));
+            // All detail/activity views use the same parsed completeness flag.
+            let mut queue = frame.workqs[0].clone();
+            queue.pending = Some(Vec::new());
+            assert_eq!(
+                crate::workq_activity::Pressure::from_queue(Some(&queue)),
+                crate::workq_activity::Pressure::Unknown
+            );
+            assert_eq!(
+                crate::workq_activity::Activity::from_queue(Some(&queue)),
+                crate::workq_activity::Activity::NotProcessing
+            );
+            queue.pending_truncated = false;
+            assert_eq!(
+                crate::workq_activity::Pressure::from_queue(Some(&queue)),
+                crate::workq_activity::Pressure::Clear
+            );
+            let untruncated = parse(
+                &json!({
+                    "threads": [],
+                    "workqs": [{"address": 1, "name": "queue", "pending": [], field: false}]
+                })
+                .to_string(),
+            )
+            .unwrap()
+            .remove(0);
+            assert!(!untruncated.workqs[0].pending_truncated);
         }
     }
 

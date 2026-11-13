@@ -1,0 +1,4 @@
+# Independent from the desktop exporter's older backend contract.
+aiohttp==3.13.3
+PyYAML==6.0.3
+zview @ git+https://github.com/wkhadgar/zview.git@cfc6d6d383ff4fbe04ec35f7a8d84ed99d5b71ac
