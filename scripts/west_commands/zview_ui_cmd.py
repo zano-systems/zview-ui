@@ -56,8 +56,9 @@ class ZViewUiCommand(WestCommand):
                             help="Minimum period between heap map captures, in seconds (default: 1).")
         parser.add_argument("--heap-cooldown", type=float, default=1.0,
                             help="Minimum delay after a completed heap map, in seconds (default: 1).")
-        parser.add_argument("--port", type=int, default=8765,
-                            help="Local port; 0 picks a free one (default: 8765).")
+        parser.add_argument("--port", type=int,
+                            help="Local port; 0 picks a free one (default: 8765, "
+                                 "or a free port when 8765 is taken).")
         parser.add_argument("--data-root", help="Trusted directory the UI may read paths from.")
         parser.add_argument("--no-build", action="store_true",
                             help="Serve the existing WASM site without rebuilding it.")

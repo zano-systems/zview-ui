@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import socket
 import tempfile
 import unittest
 from pathlib import Path
@@ -111,6 +112,23 @@ class ServeTests(unittest.IsolatedAsyncioTestCase):
         start_live.assert_not_awaited()
         self.assertIsNone(body["data"])
         self.assertIn("auto-connect failed", "".join(c.args[0] for c in stderr.write.call_args_list))
+
+    async def test_taken_default_port_falls_back_but_an_explicit_one_fails(self):
+        with socket.socket() as taken:
+            taken.bind(("127.0.0.1", 0))
+            taken.listen()
+            busy = taken.getsockname()[1]
+            with patch("server.DEFAULT_PORT", busy):
+                stop = asyncio.Event()
+                ready = asyncio.Future()
+                task = asyncio.create_task(server.serve(
+                    self.root, ready=ready.set_result, stop=stop))
+                url = await asyncio.wait_for(ready, 10)
+                stop.set()
+                await asyncio.wait_for(task, 10)
+                self.assertNotIn(f":{busy}/", url)
+                with self.assertRaisesRegex(OSError, f"Cannot listen on 127.0.0.1:{busy}"):
+                    await server.serve(self.root, port=busy, stop=asyncio.Event())
 
     async def test_without_live_nothing_connects(self):
         start_live = AsyncMock()

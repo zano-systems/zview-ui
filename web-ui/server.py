@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import contextlib
+import errno
 import signal
 import sys
 import webbrowser
@@ -21,6 +22,7 @@ from session import SessionBusy, SessionController
 from view_selection import ViewBusy
 
 HERE = Path(__file__).resolve().parent
+DEFAULT_PORT = 8765
 FRONTEND = HERE.parent / "target" / "web"
 CONTROLLER = web.AppKey("controller", SessionController)
 DATA_ROOT = web.AppKey("data_root", Path)
@@ -380,7 +382,20 @@ async def start_live_session(app, live):
     return context
 
 
-async def serve(data_root, *, host="127.0.0.1", port=8765, period=0.1, heap_period=1.,
+async def bind(runner, host, port):
+    """Bind ``port``; ``None`` means DEFAULT_PORT, or any free port when it is taken."""
+    try:
+        await web.TCPSite(runner, host, DEFAULT_PORT if port is None else port).start()
+    except OSError as exc:
+        if port is not None or exc.errno != errno.EADDRINUSE:
+            raise OSError(exc.errno, f"Cannot listen on {host}:{port}: {exc.strerror}. "
+                          "Choose another --port, or 0 for any free port.") from None
+        print(f"ZView: port {DEFAULT_PORT} is in use; using a free port.", flush=True)
+        await web.TCPSite(runner, host, 0).start()
+    return f"http://{host}:{runner.addresses[0][1]}/"
+
+
+async def serve(data_root, *, host="127.0.0.1", port=None, period=0.1, heap_period=1.,
                 heap_cooldown=1., live=None, open_browser=False, ready=None, stop=None):
     """Serve until ``stop`` is set (or Ctrl+C), optionally auto-connecting ``live``."""
     app = create_app(data_root, period=period, heap_period=heap_period,
@@ -388,9 +403,11 @@ async def serve(data_root, *, host="127.0.0.1", port=8765, period=0.1, heap_peri
     runner = web.AppRunner(app)
     await runner.setup()
     try:
-        site = web.TCPSite(runner, host, port)
-        await site.start()
-        url = f"http://{host}:{runner.addresses[0][1]}/"
+        url = await bind(runner, host, port)
+    except BaseException:
+        await runner.cleanup()
+        raise
+    try:
         if live is not None:
             try:
                 context = await start_live_session(app, live)
@@ -421,7 +438,7 @@ async def serve(data_root, *, host="127.0.0.1", port=8765, period=0.1, heap_peri
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", type=int, default=8765, help="0 picks a free port.")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="0 picks a free port.")
     parser.add_argument("--period", type=float, default=0.1,
                         help="Live polling period in seconds; 0 polls back-to-back (default: 0.1).")
     parser.add_argument("--heap-period", type=float, default=1.,
