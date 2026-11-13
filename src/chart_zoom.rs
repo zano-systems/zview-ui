@@ -1,7 +1,7 @@
 //! Shared trailing-time viewport and wheel interaction for both plot renderers.
 use crate::model::ChartSeries;
 use gpui_kit::component::{
-    IconName, Sizable,
+    Icon, IconName, Sizable,
     button::{Button, ButtonVariants},
 };
 use gpui_kit::prelude::FluentBuilder;
@@ -132,10 +132,11 @@ pub(super) fn wrap(
                             },
                         ),
                 )
+                .child(div().flex().items_center().gap_1()
                 .when(live.is_some(), |el| el.child(
                     div().debug_selector(move || format!("{id}-reset-live")).child(
                     Button::new(SharedString::from(format!("{id}-follow-live")))
-                        .small().ghost().label(format!("Reset {base_seconds:.0}s"))
+                        .small().ghost().icon(Icon::new(assets::IconName::RotateCcw))
                         .tooltip(format!("Reset this chart to the default {base_seconds:.0}-second window. Scroll to zoom; the duration at left is the visible time span."))
                         .accessibility_label(format!("Reset live chart to {base_seconds:.0} seconds"))
                         .on_click(move |_, _, cx| {
@@ -161,7 +162,7 @@ pub(super) fn wrap(
                                     cx.notify(view);
                                 }),
                         ),
-                ),
+                )),
         )
         .child(div().flex_1().min_h_0().child(plot))
 }

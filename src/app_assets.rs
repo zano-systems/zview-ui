@@ -1,7 +1,10 @@
 use gpui_kit::{AssetSource, Result, SharedString, assets};
 use std::borrow::Cow;
 
-assets::icon_assets!(ExtraIcons, [Spool, Boxes, Activity, CircleDashed]);
+assets::icon_assets!(
+    ExtraIcons,
+    [Spool, Boxes, Activity, CircleDashed, RotateCcw]
+);
 
 // Embed web controls too: no CDN requests or asset base-path assumptions.
 #[cfg(any(test, target_family = "wasm"))]
@@ -123,6 +126,7 @@ mod tests {
             "icons/plus.svg",
             "icons/minus.svg",
             "icons/maximize.svg",
+            "icons/rotate-ccw.svg",
         ] {
             assert!(AppAssets.load(path).unwrap().is_some(), "{path}");
         }

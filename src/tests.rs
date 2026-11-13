@@ -48,13 +48,14 @@ fn live_charts_use_wheel_and_reset_without_a_footer_slider(cx: &mut TestAppConte
             name: object.name.clone(),
         }
     });
-    for (screen, surface, zoomed, reset, unzoomed) in [
+    for (screen, surface, zoomed, reset, unzoomed, fit) in [
         (
             Screen::Overview,
             "cpu-zoom-surface",
             "cpu-zoomed",
             "cpu-reset-live",
             "cpu-unzoomed",
+            "cpu-fit-history",
         ),
         (
             Screen::Semaphore(semaphore),
@@ -62,6 +63,7 @@ fn live_charts_use_wheel_and_reset_without_a_footer_slider(cx: &mut TestAppConte
             "semaphore-step-area-zoomed",
             "semaphore-step-area-reset-live",
             "semaphore-step-area-unzoomed",
+            "semaphore-step-area-fit-history",
         ),
     ] {
         cx.update(|window, cx| {
@@ -81,8 +83,15 @@ fn live_charts_use_wheel_and_reset_without_a_footer_slider(cx: &mut TestAppConte
         });
         cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(cx.debug_bounds(zoomed).is_some());
-        let reset = cx.debug_bounds(reset).unwrap().center();
-        cx.simulate_click(reset, Modifiers::default());
+        let reset = cx.debug_bounds(reset).unwrap();
+        let fit = cx.debug_bounds(fit).unwrap();
+        assert!((reset.center().y - fit.center().y).abs() <= px(0.5));
+        assert!(reset.right() <= fit.left() && fit.left() - reset.right() <= px(8.));
+        assert!(
+            reset.size.width <= px(32.),
+            "Reset must remain an icon-only control."
+        );
+        cx.simulate_click(reset.center(), Modifiers::default());
         cx.update(|window, cx| window.draw(cx).clear(cx));
         assert!(cx.debug_bounds(unzoomed).is_some());
         app.read_with(&cx, |app, _| {

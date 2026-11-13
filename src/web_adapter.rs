@@ -21,6 +21,8 @@ extern "C" {
 
 #[path = "web_session.rs"]
 mod session_ui;
+#[path = "web_usage.rs"]
+mod usage_ui;
 
 pub(super) struct Controls {
     pub available: bool,
@@ -31,7 +33,7 @@ pub(super) struct Controls {
     last_frame_received: Option<(web_time::Instant, f64)>,
     client_id: Option<String>,
     view_interest: ViewInterest,
-    usage_focus: FocusHandle,
+    usage: usage_ui::UsageInput,
     draft: session_ui::Draft,
     _draft_subscriptions: Vec<Subscription>,
 }
@@ -57,7 +59,7 @@ impl Controls {
             last_frame_received: None,
             client_id: None,
             view_interest: ViewInterest::default(),
-            usage_focus: cx.focus_handle(),
+            usage: usage_ui::UsageInput::new(window, cx),
             draft,
             _draft_subscriptions: subscriptions,
         }
@@ -83,58 +85,6 @@ impl Controls {
 }
 
 impl ThreadsApp {
-    pub(crate) fn adapter_usage_controls(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        let session = self.adapter.state.session.as_ref()?;
-        if session.mode() != Mode::Live {
-            return None;
-        }
-        let polls = session.usage_window?;
-        let enabled = session.status == Status::Reading
-            && self.adapter.state.connection == Connection::Connected
-            && !self.adapter.state.pending
-            && session.live_view.as_ref().is_some_and(|view| {
-                view.owner.is_some()
-                    && view.owner == self.adapter.client_id
-                    && view.usage_window == polls
-            });
-        Some(div().id("cpu-averaging").debug_selector(|| "cpu-averaging".into())
-            .flex().items_center().gap_1().flex_shrink_0()
-            .track_focus(&self.adapter.usage_focus).tab_stop(true)
-            .aria_label(format!("CPU and Load over {polls} polls. Plus doubles; minus halves the poll window."))
-            .capture_any_mouse_down(cx.listener(|app, _, window, cx| {
-                app.adapter.usage_focus.focus(window, cx);
-            }))
-            .on_key_down(cx.listener(move |app, event: &KeyDownEvent, _, cx| {
-                if !enabled { return; }
-                let next = match event.keystroke.key.as_str() {
-                    "+" | "=" => (polls * 2).min(64),
-                    "-" => (polls / 2).max(1),
-                    _ => return,
-                };
-                if next != polls { app.set_usage_window(next, cx); }
-                cx.stop_propagation();
-            }))
-            .child(div().text_xs().text_color(rgb(MUTED))
-                .child(format!("CPU / Load · {polls} {}", if polls == 1 { "sample" } else { "samples" })))
-            .child(div().debug_selector(|| "cpu-averaging-halve".into()).child(
-                Button::new("cpu-averaging-halve").small().label("−")
-                    .accessibility_label("Halve CPU and Load averaging samples")
-                    .tooltip("Sum cycle counters over half as many polls (minimum 1).")
-                    .disabled(!enabled || polls <= 1)
-                    .on_click(cx.listener(move |app, _, _, cx| {
-                        app.set_usage_window((polls / 2).max(1), cx);
-                    }))))
-            .child(div().debug_selector(|| "cpu-averaging-double".into()).child(
-                Button::new("cpu-averaging-double").small().label("+")
-                    .accessibility_label("Double CPU and Load averaging samples")
-                    .tooltip("Sum cycle counters over twice as many polls (maximum 64). Independent of chart time window.")
-                    .disabled(!enabled || polls >= 64)
-                    .on_click(cx.listener(move |app, _, _, cx| {
-                        app.set_usage_window((polls * 2).min(64), cx);
-                    }))))
-            .into_any_element())
-    }
-
     fn set_usage_window(&mut self, polls: u32, cx: &mut Context<Self>) {
         if let (Some(session), Some(client_id)) =
             (&self.adapter.state.session, &self.adapter.client_id)
@@ -422,6 +372,9 @@ impl ThreadsApp {
                 if let Err(error) = result {
                     this.adapter.draft.error = Some(error.clone());
                     this.error = Some(error);
+                    if path == "/api/session/usage-window" {
+                        this.adapter.usage.restore(window, cx);
+                    }
                 } else if !matches!(path, "/api/session/stop" | "/api/session/usage-window")
                     && this.adapter.draft.open
                 {
@@ -447,6 +400,9 @@ impl ThreadsApp {
         if !self.adapter.state.accept(message)? {
             return Ok(());
         }
+        self.adapter
+            .usage
+            .sync(self.adapter.state.session.as_ref(), window, cx);
         if interrupted {
             self.live_history.interrupt();
         }
@@ -719,6 +675,12 @@ pub fn adapter_state() -> Result<String, JsValue> {
         state["history_origin"] = json!(this.live_history.origin());
         state["history_view"] = json!(adapter.history_view);
         state["usage_window"] = json!(adapter.state.session.as_ref().and_then(|s| s.usage_window));
+        state["usage_input"] = json!(adapter.usage.state.read(cx).value().to_string());
+        let input = adapter.usage.state.read(cx).input_bounds();
+        state["usage_input_bounds"] = json!({
+            "x": input.left().as_f32(), "y": input.top().as_f32(),
+            "width": input.size.width.as_f32(), "height": input.size.height.as_f32(),
+        });
         state["requested_usage_window"] = json!(
             adapter
                 .state
