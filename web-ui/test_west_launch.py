@@ -12,7 +12,7 @@ from urllib.request import urlopen
 import server
 from session import SessionController
 from test_build_context import make_build
-from west_launch import data_root_for, live_request, zview_pin
+from west_launch import data_root_for, heap_period, live_request, zview_pin
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -32,6 +32,12 @@ class HelperTests(unittest.TestCase):
         bad.write_text("aiohttp==1\nzview==0.28.1\n")
         with self.assertRaises(ValueError):
             zview_pin(bad)
+
+    def test_heap_maps_follow_polling_unless_set(self):
+        self.assertEqual(heap_period(0.1, None), 0.1)
+        self.assertEqual(heap_period(0.25, None), 0.25)
+        self.assertGreater(heap_period(0, None), 0)
+        self.assertEqual(heap_period(0.1, 2.0), 2.0)
 
     def test_workspace_root_holds_build_and_sources(self):
         self.assertEqual(data_root_for(self.build, self.top), self.top)

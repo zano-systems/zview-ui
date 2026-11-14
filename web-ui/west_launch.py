@@ -18,6 +18,13 @@ def zview_pin(requirements=REQUIREMENTS):
     return match.group(1)
 
 
+def heap_period(period, requested):
+    """Heap maps follow polling unless set; back-to-back polling maps back-to-back too."""
+    if requested is not None:
+        return requested
+    return period if period > 0 else 0.001
+
+
 def application_source(build_dir):
     """The application source directory recorded in ``CMakeCache.txt``, if any."""
     cache = Path(build_dir) / "CMakeCache.txt"

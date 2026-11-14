@@ -52,10 +52,11 @@ class ZViewUiCommand(WestCommand):
         parser.add_argument("--frequency", type=int, help="Probe clock override, in Hz.")
         parser.add_argument("--period", type=float, default=0.1,
                             help="Live polling period in seconds; 0 polls back-to-back (default: 0.1).")
-        parser.add_argument("--heap-period", type=float, default=1.0,
-                            help="Minimum period between heap map captures, in seconds (default: 1).")
-        parser.add_argument("--heap-cooldown", type=float, default=1.0,
-                            help="Minimum delay after a completed heap map, in seconds (default: 1).")
+        parser.add_argument("--heap-period", type=float,
+                            help="Minimum period between heap map captures, in seconds "
+                                 "(default: --period, so fragmentation follows heap polling).")
+        parser.add_argument("--heap-cooldown", type=float, default=0.0,
+                            help="Minimum delay after a completed heap map, in seconds (default: 0).")
         parser.add_argument("--port", type=int,
                             help="Local port; 0 picks a free one (default: 8765, "
                                  "or a free port when 8765 is taken).")
@@ -70,6 +71,11 @@ class ZViewUiCommand(WestCommand):
         del unknown
         build_dir = self._build_dir(args)
         self._use_zview()
+        # Like `west zview`: ZView's warnings (e.g. resynced broken frames) go to
+        # its rotating log file instead of flooding the terminal.
+        from zview.logging_setup import configure as configure_logging
+
+        self.inf(f"ZView log: {configure_logging()}")
         try:
             import aiohttp  # noqa: F401
         except ImportError:
@@ -98,7 +104,8 @@ class ZViewUiCommand(WestCommand):
 
         try:
             asyncio.run(server.serve(
-                root, port=args.port, period=args.period, heap_period=args.heap_period,
+                root, port=args.port, period=args.period,
+                heap_period=west_launch.heap_period(args.period, args.heap_period),
                 heap_cooldown=args.heap_cooldown, live=live, open_browser=not args.no_open,
             ))
         except KeyboardInterrupt:
